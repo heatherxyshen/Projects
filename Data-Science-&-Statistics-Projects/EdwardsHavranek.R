@@ -1,3 +1,5 @@
+## Here we replicate the model selection process of Edwards and Havranek (1985) used in the Reinis dataset contingency table
+
 library(gRbase)
 library(gRim)
 data(reinis)
