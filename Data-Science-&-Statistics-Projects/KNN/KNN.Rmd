@@ -1,0 +1,124 @@
+---
+title: "KNN"
+author: "Heather Shen"
+date: "2/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, message = FALSE, echo = FALSE}
+library(dplyr)
+library(caret) #used for createFolds
+library(ggplot2)
+```
+
+##### Part 1
+```{r, cache = TRUE, echo = FALSE}
+data = iris[which(iris$Species %in% c("versicolor", "virginica")),]
+data$Species = ifelse(data$Species == "versicolor", 0, 1)
+dat.X = subset(data, select = -Species)
+dat.Y = subset(data, select = Species)
+
+# covar is the covariance matrix
+covar = cov(dat.X)
+
+# dist = dist.mat(dat.X, 1, covar)
+set.seed(105873)
+N = 100
+k = c(3, 4, 5, 6, 7, 8, 9, 10)
+n.k = length(k)
+cv.err.k = rep(0,length(n.k))
+for(z in 1:N){
+  cv.err.k.temp = rep(0, n.k)
+  folds = createFolds(data$Species, 5)
+  for(a in 1:n.k){
+    err = 0
+    for(i in 1:5){
+      train = data[-folds[[i]],]
+      train.x = subset(train, select = -Species)
+      train.y = subset(train, select = Species)
+      test = data[folds[[i]],]
+      test.x = subset(test, select = -Species)
+      true.y = subset(test, select = Species)
+    
+      covmat = cov(train.x)
+      dist = apply(test.x, MARGIN = 1, FUN = function(x){sqrt(mahalanobis(train.x, as.numeric(x), covmat))})
+      n <- length(folds[[i]])
+      test.y = numeric(n)
+      for(j in 1:n){
+        ind.votes = which(dist[,j] %in% sort(dist[,j], partial=1:k[a], decreasing = FALSE)[1:k[a]])
+        if(sum(train.y$Species[ind.votes] == 0) == k[a]/2){
+          test.y[j] = ifelse(sample(c(0, 1), 1) == 0, 0, 1)
+        }
+        else{
+          test.y[j] = ifelse(sum(train.y$Species[ind.votes] == 0) > k[a]/2, 0, 1)
+        }
+      }
+      err = err + mean((test.y - as.numeric(unlist(true.y)))^2)
+    }
+    cv.err.k.temp[a] = err/5
+  }
+  cv.err.k = cv.err.k+cv.err.k.temp
+}
+cv.err.k = cv.err.k/N
+
+qplot(k, cv.err.k, geom = c("point", "line"), main = "CV error by k", xlab = "k", ylab = "CV Error")
+
+k.opt = k[which(cv.err.k == min(cv.err.k))]
+print(paste("Under the optimal k: ", k.opt, ", the error is: ", min(cv.err.k)))
+```
+
+
+##### Part 2
+```{r, cache = TRUE, echo = FALSE}
+N = 100
+k = k.opt
+cv.err.x = rep(0,4)
+for(z in 1:N){
+  cv.err.x.temp = rep(0, 4)
+  folds = createFolds(data$Species, 5)
+  for(a in 1:4){
+    err = 0
+    for(i in 1:5){
+      train = data[-folds[[i]],]
+      train = train[,-a]
+      train.x = subset(train, select = -Species)
+      train.y = subset(train, select = Species)
+      
+      test = data[folds[[i]],]
+      test = test[,-a]
+      test.x = subset(test, select = -Species)
+      true.y = subset(test, select = Species)
+    
+      covmat = cov(train.x)
+      dist = apply(test.x, MARGIN = 1, FUN = function(x){sqrt(mahalanobis(train.x, as.numeric(x), covmat))})
+      n <- length(folds[[i]])
+      test.y = numeric(n)
+      for(j in 1:n){
+        ind.votes = which(dist[,j] %in% sort(dist[,j], partial=1:k, decreasing = FALSE)[1:k])
+        if(sum(train.y$Species[ind.votes] == 0) == k/2){
+          test.y[j] = ifelse(sample(c(0, 1), 1) == 0, 0, 1)
+        }
+        else{
+          test.y[j] = ifelse(sum(train.y$Species[ind.votes] == 0) > k/2, 0, 1)
+        }
+      }
+      err = err + mean((test.y - as.numeric(unlist(true.y)))^2)
+    }
+    cv.err.x.temp[a] = err/5
+  }
+  cv.err.x = cv.err.x+cv.err.x.temp
+}
+cv.err.x = cv.err.x/N
+
+diff = data.frame(err.diff = c(cv.err.x - min(cv.err.k)), var = colnames(dat.X))
+ggplot(diff, aes(var, err.diff)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Compare omitting variable and optimal k error", x = "Variable taken out", y = "Difference from optimal k error")
+```
+
+The most important variable, where error increased the most from the optimal error when taking out the variable, is Petal Length. The least important variable, where error increased the least (or in our case actually decreased when taking the variable out, is Sepal Width.
