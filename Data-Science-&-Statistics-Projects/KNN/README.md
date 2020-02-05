@@ -1,0 +1,8 @@
+We use the iris dataset found in R in this problem. It is a dataset consists of n = 150 observations with 4 continuous variables and 1 categorical variable (species). To simplify the problem, we focus on species equals to versicolor and virginica so that it becomes a binary classification problem. We will use the idea of k-NN classification to perform our analysis with the species variable being the class label and the other 4 variables are the features.
+However, a challenge of using the k-NN in this case is that the 4 variables have different ranges so naively using the k-NN may not work well. So here, we use the Malahanobis distance and a 0-1 loss for classification.
+
+## Part 1
+Apply 5-fold cross-validation to k = 3, 4, 5, · · · , 10. Show the cross-validation error versus k. If there is a tie, we randomly assign it to a class in the tie with an equal probability. Under the optimal k, what is the performance under the 5-fold cross-validation error?
+
+## Part 2
+In regression or classification, sometimes we are interested in the variable importance–some vari- able may not contribute to the classification performance much. To investigate this, we may remove one variable and re-compute the classification error under 5-fold cross-validation with the same optimal k chosen in the previous question (we do not search for a new optimal k). The change in classification error will be a measure of variable importance. Since we have 4 variables, each time we remove one variable and use the other 3 variables to do classification. Show the change in the classification error when removing each variable. Which variable is the least im- portant one (the error decrease the least)? and which one is the most important one (the error decreases the most)?
