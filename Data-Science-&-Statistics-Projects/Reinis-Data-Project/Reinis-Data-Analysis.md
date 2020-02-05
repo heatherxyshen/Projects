@@ -36,7 +36,7 @@ m.reinis <- stepwise(m.init, details = 1)
 plot(m.reinis)
 ```
 
-![Image description](link-to-image)
+![Resulting Model from Backward Stepwise function with AIC criterion](Plot1.png)
 
 We see that in the stepwise function, each step takes out an edge that decreases AIC the most until there are no more edges that decrease AIC. Thus, each of the models output by the stepwise function was a part of the process of choosing the final model. So our relevant models begin with the saturated model and the steps were:
 
