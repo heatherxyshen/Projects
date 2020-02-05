@@ -1,0 +1,2429 @@
+---
+title: "Thesis hxshen"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+Read Data
+```{r data, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+data_music = read.csv("SongCSV.csv")
+data_music_use = data_music
+data_music_use$Hotness[which(data_music_use$Hotness == "NaN")] = NA
+data_clean = data_music_use[complete.cases(data_music_use$Hotness),]
+data_clean$Year[which(data_clean$Year == 0)] = NA
+data_clean = data_clean[complete.cases(data_clean$Year),]
+data_clean = data_clean[which(data_clean$Year > 1960),]
+data_clean = data_clean[which(data_clean$Year < 2011),]
+valid = which(data_clean$Hotness > 0)
+data_clean = data_clean[valid,]
+for(i in 10:22) {
+  data_clean[,i] = as.numeric(data_clean[,i])
+
+}
+data_use = data_clean[which(as.numeric(as.character(data_clean$Hotness)) > 0.5),]
+```
+
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+library(plyr)
+library(qcc)
+library(randomForest)
+library(fda)
+library(tseries)
+library(astsa)
+library(MASS)
+library(ipred)
+library(forecast)
+library(boot)
+library(lmtest)
+```
+
+Preliminary Exploratory Code
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+boxplot(Hotness~Genre, data = data_clean)
+abline(mean(data_clean$Hotness), 0, col = "red")
+boxplot(Hotness~Genre, data = data_use)
+abline(mean(data_use$Hotness), 0, col = "red")
+#Indie Pop is best for hotness
+hist(data_clean$Hotness[valid], main = "Histogram of Hotness", xlab = "Hotness Rating")
+data_clean$Quality = ifelse(data_clean$Hotness <= 0.6, ifelse(data_clean$Hotness <= 0.4, 'Bad', 'Average'), 'Good')
+```
+
+Consumer Sentiment FDA
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+data_consent = read.csv("Consumer Sentiment Data.csv", header = T)
+data_consent = data_consent[,-1]
+
+#get basis
+norder <- 4 #order
+samples <- seq(1,50,1) #how many years, by each year
+nbasis <- length(samples) + norder-2 #formula to calculate basis number
+mybasis <- create.bspline.basis(c(1,50), nbasis, norder)
+
+data_consent1 <- data_consent[which(data_consent$YYYY > 1960 & data_consent$YYYY < 2011),]
+matplot(samples[1:50], data_consent$ICS_ALL[1:50], xlab="Years", type="l",  ylab="Consumer Sent Avg")
+#plot original lines from data w/o penalty, 1:56 rows
+
+fdamatri=fd(matrix(0, nbasis, 1),mybasis) #nbasis = years, 1 = 1 col of data
+#transfers data into fda format necessary to run fda
+#cv to choose lamda
+loglam = seq(-8.9,-8.3,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, data_consent1$ICS_ALL[1:50], myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.5)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_consent <- smooth.basis(samples, data_consent1$ICS_ALL[1:50], myfdPar)
+fdafd_consent<-myfd1_consent$fd
+plot(fdafd_consent, main = "Smooth Consumer Sentiment") #final line after fda
+
+FirstDeriv_consent <- deriv.fd(fdafd_consent,1)
+plot(FirstDeriv_consent, main = "First Derivative Consumer Sentiment Plot", xlab = "Time", ylab = "First Derivative")
+derivatives_consent <- FirstDeriv_consent$coefs
+```
+
+Unemployment FDA
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+data_unemploy = read.csv("Unemployment Data.csv", header = T)
+
+#get basis
+norder <- 4 #order
+samples <- seq(1,50,1) #how many years, by each year
+nbasis <- length(samples) + norder-2 #formula to calculate basis number
+mybasis <- create.bspline.basis(c(1,50), nbasis, norder)
+
+data_unemploy2 <- data_unemploy[which(data_unemploy$Year > 1960 & data_unemploy$Year < 2011),]
+matplot(samples[1:50], data_unemploy2$X[1:50], xlab="Years", type="l",  ylab="Unemployment Avg")
+#plot original lines from data w/o penalty, 1:56 rows
+
+fdamatri=fd(matrix(0, nbasis, 1),mybasis) #nbasis = years, 1 = 1 col of data
+#transfers data into fda format necessary to run fda
+
+#cv to choose lamda
+loglam = seq(-8.9,-8.3,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, data_unemploy2$X[1:50], myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.55)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_unemploy <- smooth.basis(samples, data_unemploy2$X[1:50], myfdPar)
+fdafd_unemploy<-myfd1_unemploy$fd
+plot(fdafd_unemploy, main = "Smooth Unemployment") #final line after fda
+
+FirstDeriv_unemploy <- deriv.fd(fdafd_unemploy,1)
+plot(FirstDeriv_unemploy, main = "First Derivative Unemployment Plot", xlab = "Time", ylab = "Derivative")
+derivatives_unemploy <- FirstDeriv_unemploy$coefs
+```
+
+GDP FDA
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+data_gdp = read.csv("GDP.csv", header = T, quote = "")
+
+gdp_year <- strsplit(as.character(data_gdp$DATE), split = "-") 
+gdp_year1 <- lapply(gdp_year, "[[", 1)
+data_gdp$Month = lapply(gdp_year, "[[", 2)
+data_gdp$Year <- gdp_year1
+data_gdp2 <- data_gdp[which(data_gdp$Year > 1960 & data_gdp$Year < 2011 & data_gdp$Month == 01),c(2, 4)]
+data_gdp2$Year = as.numeric(data_gdp2$Year)
+n <- length(data_gdp2$Year)
+#get basis
+norder <- 4 #order
+samples <- seq(1,n,1) #how many years, by each year
+nbasis <- length(samples) + norder-2 #formula to calculate basis number
+mybasis <- create.bspline.basis(c(1,n), nbasis, norder)
+
+matplot(samples[1:n], data_gdp2$VALUE, xlab="Years", type="l",  ylab="GDP")
+#plot original lines from data w/o penalty, 1:56 rows
+
+
+fdamatri=fd(matrix(0, nbasis, 1),mybasis) #nbasis = years, 1 = 1 col of data
+#transfers data into fda format necessary to run fda
+
+
+#cv to choose lamda
+loglam = seq(-9.15,-8.6,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, data_gdp2$VALUE, myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+
+lambda<-10^(-8.9)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_gdp <- smooth.basis(samples, data_gdp2$VALUE, myfdPar)
+fdafd_gdp<-myfd1_gdp$fd
+plot(fdafd_gdp, main = "Smooth GDP") #final line after fda
+
+FirstDeriv_gdp <- deriv.fd(fdafd_gdp,1)
+plot(FirstDeriv_gdp, main = "First Derivative GDP Plot", xlab = "Time", ylab = "First Derivative")
+derivatives_gdp <- FirstDeriv_gdp$coefs
+
+SecondDeriv_gdp <- deriv.fd(fdafd_gdp,2)
+plot(SecondDeriv_gdp, main = "Second Derivative GDP")
+derivatives2_gdp <- SecondDeriv_gdp$coefs
+```
+
+SP 500 FDA Adj. Close, Range
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+data_sp500 = read.csv("SP 500 Data.csv", header = T, quote = "")
+data_sp500_range = read.csv("SP 500 Data Range.csv", header = T, quote = "")
+data_sp500_range = data_sp500_range[,-6]
+
+data_sp500_range = data_sp500_range[complete.cases(data_sp500_range),]
+data_sp5002_range <- data_sp500_range[which(data_sp500_range$Year > 1960 & data_sp500_range$Year < 2011),]
+
+sp500_year <- strsplit(as.character(data_sp500$Date), split = "/") 
+data_sp500$Month = as.numeric(lapply(sp500_year, "[[", 1))
+data_sp5002 <- data_sp500[which(data_sp500$Year > 1960 & data_sp500$Year < 2011),]
+data_sp500_high <- tapply(as.vector(data_sp5002$High), as.numeric(data_sp5002$Year), max)
+data_sp500_low <- tapply(as.vector(data_sp5002$Low), as.numeric(data_sp5002$Year), min)
+
+data_sp5002 = data_sp5002[which(data_sp5002$Month == 1),7:8]
+data_sp5002$Range = data_sp5002_range$X
+data_sp5002$High = rev(data_sp500_high)
+data_sp5002$Low = rev(data_sp500_low)
+
+data_sp5002 = data_sp5002[order(data_sp5002$Year),]
+
+n <- length(data_sp5002$Year)
+#get basis
+norder <- 4 #order
+samples <- seq(1,n,1) #how many years, by each year
+nbasis <- length(samples) + norder-2 #formula to calculate basis number
+mybasis <- create.bspline.basis(c(1,n), nbasis, norder)
+
+matplot(samples[1:n], data_sp5002$High, xlab="Years", type="l",  ylab="SP500 Avg")
+#plot original lines from data w/o penalty, 1:56 rows
+lines(samples[1:n], data_sp5002$Low, col = 'red')
+#lines(samples[1:360], data_sp5002$Open[360:1], col = 'blue')
+#lines(samples[1:360], data_sp5002$Close[360:1], col = 'green')
+
+fdamatri=fd(matrix(0, nbasis, 1),mybasis) #nbasis = years, 1 = 1 col of data
+#transfers data into fda format necessary to run fda
+
+
+#ADJ. CLOSE
+loglam = seq(-9.55,-9,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, data_sp5002$Adj.Close, myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+
+lambda<-10^(-9.4)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_sp500close <- smooth.basis(samples, data_sp5002$Adj.Close, myfdPar)
+fdafd_sp500close<-myfd1_sp500close$fd
+FirstDeriv_sp500close <- deriv.fd(fdafd_sp500close,1)
+derivatives_sp500close <- FirstDeriv_sp500close$coefs
+plot(fdafd_sp500close, main = "Smooth SP 500 Adj. Close") #final line after fda
+plot(FirstDeriv_sp500close, main = "First Derivative SP 500 Adj. Close Plot", xlab = "Time", ylab = "First Derivative")
+
+#RANGE
+loglam = seq(-9.55,-9,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, data_sp5002$Range, myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+
+lambda<-10^(-9.45)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_sp500range <- smooth.basis(samples, data_sp5002$Range, myfdPar)
+fdafd_sp500range<-myfd1_sp500range$fd
+FirstDeriv_sp500range <- deriv.fd(fdafd_sp500range,1)
+derivatives_sp500range <- FirstDeriv_sp500range$coefs
+plot(fdafd_sp500range, main = "Smooth SP 500 Range") #final line after fda
+plot(FirstDeriv_sp500range, main = "First Derivative SP 500 Range")
+```
+
+Top Genres
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+genre = data.frame(count(data_use$Genre))
+genre_pareto = genre[,2]
+names(genre_pareto) = genre[,1]
+pareto.chart(genre_pareto, main = "Pareto Chart by Genre")
+top_genres = list("Rock", "Dance", "Hip Hop/Rap", "Pop", "Singer/Songwriter", "Jazz", "Alternative")
+```
+
+Data by Genre
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+subsettotal = subset(data_use, data_use$Genre %in% top_genres)
+rock = subset(data_use, data_use$Genre == "Rock")
+dance = subset(data_use, data_use$Genre == "Dance")
+hip_rap = subset(data_use, data_use$Genre == "Hip Hop/Rap")
+pop = subset(data_use, data_use$Genre == "Pop")
+sing = subset(data_use, data_use$Genre == "Singer/Songwriter")
+jazz = subset(data_use, data_use$Genre == "Jazz")
+alt = subset(data_use, data_use$Genre == "Alternative")
+#rock, Dance, Hip Hop/Rap, Pop, Singer/Songwriter, Jazz, Alternative from complete set
+
+rockc = subset(data_clean, data_clean$Genre == "Rock")
+dancec = subset(data_clean, data_clean$Genre == "Dance")
+hip_rapc = subset(data_clean, data_clean$Genre == "Hip Hop/Rap")
+popc = subset(data_clean, data_clean$Genre == "Pop")
+singc = subset(data_clean, data_clean$Genre == "Singer/Songwriter")
+jazzc = subset(data_clean, data_clean$Genre == "Jazz")
+altc = subset(data_clean, data_clean$Genre == "Alternative")
+```
+
+Total Analysis
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+hotness_year = cbind(data_use$Hotness, data_use$Year)
+hotness_year = hotness_year[order(hotness_year[,2]),]
+colnames(hotness_year) = c("Hotness", "Year")
+hotness_year_count = cbind(1, hotness_year[,2])
+hotness_year_count = tapply(hotness_year_count[,1], hotness_year_count[,2],sum)
+hotness_year_ave = tapply(hotness_year[,1], hotness_year[,2],mean)
+plot(levels(as.factor(data_use$Year)), hotness_year_ave, type = 'l')
+
+tempo_year = cbind(data_use$Tempo, data_use$Year)
+tempo_year = tempo_year[order(tempo_year[,2]),]
+colnames(tempo_year) = c("tempo", "Year")
+tempo_year_count = cbind(1, tempo_year[,2])
+tempo_year_count = tapply(tempo_year_count[,1], tempo_year_count[,2],sum)
+tempo_year_ave = tapply(tempo_year[,1], tempo_year[,2],mean)
+plot(levels(as.factor(data_use$Year)), tempo_year_ave, type = 'l', main = "Tempo by Year, 1961-2010", xlab = "Year", ylab = "Average Tempo")
+qcc(tempo_year_ave, type = "xbar", tempo_year_count, plot = TRUE, ylim = c(110, 140))
+
+loudness_year = cbind(data_use$Loudness, data_use$Year)
+loudness_year = loudness_year[order(loudness_year[,2]),]
+colnames(loudness_year) = c("loudness", "Year")
+loudness_year_count = cbind(1, loudness_year[,2])
+loudness_year_count = tapply(loudness_year_count[,1], loudness_year_count[,2],sum)
+loudness_year_ave = tapply(loudness_year[,1], loudness_year[,2],mean)
+plot(levels(as.factor(data_use$Year)), loudness_year_ave, type = 'l', main = "Loudness by Year, 1961-2010", xlab = "Year", ylab = "Average Loudness")
+qcc(loudness_year_ave, type = "xbar", loudness_year_count, plot = TRUE, ylim = c(-20,-5))
+
+timesig_year = cbind(data_use$TimeSignature, data_use$Year)
+timesig_year = timesig_year[order(timesig_year[,2]),]
+colnames(timesig_year) = c("timesig", "Year")
+timesig_year_count = cbind(1, timesig_year[,2])
+timesig_year_count = tapply(timesig_year_count[,1], timesig_year_count[,2],sum)
+timesig_year_ave = tapply(timesig_year[,1], timesig_year[,2],mean)
+plot(levels(as.factor(data_use$Year)), timesig_year_ave, type = 'l', main = "Time Signature by Year, 1961-2010", xlab = "Year", ylab = "Average Time Signature")
+qcc(timesig_year_ave, type = "xbar", timesig_year_count, plot = TRUE, ylim = c(110, 140))
+
+par(mar=c(5,4,4,5)+.1)
+plot(levels(as.factor(data_use$Year)), timesig_year_ave, type = 'l', main = "Time Signature vs. Loudness of Popular Music", xlab = "Year", ylab = "Average Time Signature")
+par(new=TRUE)
+plot(levels(as.factor(data_use$Year)), loudness_year_ave, type = 'l', col = "red", xaxt = 'n', yaxt = 'n', xlab = '', ylab = '')
+mtext("Average Loudness", side = 4, line = 3)
+axis(4)
+legend('bottomright',col=c("red","black"),lty=1,legend=c("Average Loudness","Average Time Signature"), cex = 0.75)
+
+hotness_yearc = cbind(data_clean$Hotness, data_clean$Year)
+hotness_yearc = hotness_yearc[order(hotness_yearc[,2]),]
+colnames(hotness_yearc) = c("Hotness", "Year")
+hotness_year_countc = cbind(1, hotness_yearc[,2])
+hotness_year_countc = tapply(hotness_year_countc[,1], hotness_year_countc[,2],sum)
+hotness_year_avec = tapply(hotness_yearc[,1], hotness_yearc[,2],mean)
+plot(levels(as.factor(data_clean$Year)), hotness_year_avec, type = 'l')
+
+set.seed(1)
+traintotal = sample(nrow(data_use), 0.75*nrow(data_use))
+traindata = data_use[traintotal,]
+testdata = data_use[-traintotal,]
+
+modeltotal1 = lm(Hotness~Genre, data = data_use)
+summary(modeltotal1)
+
+modeltotal2 = lm(Hotness~Genre+Year+Loudness+TimeSignature, data = data_use)
+summary(modeltotal2)
+anova(modeltotal1, modeltotal2)
+cor.test(data_use$Loudness, data_use$TimeSignature)
+
+modeltotal3 = lm(Hotness~Duration+KeySignature+Loudness+Mode+StartofFadeOut+Tempo+TimeSignature+Year+Genre, data = data_use)
+summary(modeltotal3)
+anova(modeltotal1, modeltotal2, modeltotal3)
+
+
+lmtrain = lm(Hotness~Year+Duration+Loudness, data = traindata)
+lmpredict = predict(lmtrain, newdata = testdata)
+mse.lm = sum((testdata$Hotness-lmpredict)^2)/length(testdata$Hotness)
+error.lm = sqrt(mse.lm)
+
+#par(mfrow = c(2, 2))
+#plot(lmtrain)
+
+#Random Forest Prediction
+
+set.seed(1)
+data_sample = sample(nrow(data_clean), 0.75*nrow(data_clean))
+data_train = data_clean[data_sample,]
+data_test = data_clean[-data_sample,]
+
+#rf_model = randomForest(as.factor(Quality)~Loudness+Mode+Tempo+Year+Genre, data = data_train)
+#rf_pred = predict(rf_model, newdata = data_test)
+#table(rf_pred, data_test$Quality)
+
+#LDA
+lda_model = lda(as.factor(Quality)~Loudness+Mode+Tempo+Year, data = data_train)
+predict_lda_model = predict(lda_model, newdata = data_test)
+names(predict_lda_model)
+ldatable = table(data_test$Quality,predict_lda_model$class)
+errorlda = sum(ldatable[row(ldatable) != col(ldatable)]) / sum(ldatable)
+
+#QDA
+qda_model = qda(as.factor(Quality)~Loudness+Mode+Tempo+Year, data = data_train)
+predict_qda_model = predict(qda_model, newdata = data_test)
+qdatable = table(data_test$Quality, predict_qda_model$class)
+errorqda = sum(qdatable[row(qdatable) != col(qdatable)]) / sum(qdatable)
+
+```
+
+Smooth Attributes of Total Music data
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+norder <- 4 #order
+samples <- seq(1,50,1) #how many years, by each year
+nbasis <- length(samples) + norder-2 #formula to calculate basis number
+mybasis <- create.bspline.basis(c(1,50), nbasis, norder)
+
+fdamatri=fd(matrix(0, nbasis, 1),mybasis) #nbasis = years, 1 = 1 col of data
+#transfers data into fda format necessary to run fda
+#cv to choose lamda
+
+#LOUDNESS
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(loudness_year_ave), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-9.5)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_loudness <- smooth.basis(samples, as.vector(loudness_year_ave), myfdPar)
+fdafd_loudness<-myfd1_loudness$fd
+plot(fdafd_loudness, main = "Smooth Loudness Sentiment") #final line after fda
+
+#TEMPO
+loglam = seq(-8.8,-8.3,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(tempo_year_ave), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.55)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_tempo <- smooth.basis(samples, as.vector(tempo_year_ave), myfdPar)
+fdafd_tempo<-myfd1_tempo$fd
+plot(fdafd_tempo, main = "Smooth tempo Sentiment") #final line after fda
+
+#TimeSig
+loglam = seq(-8.8,-8.3,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(timesig_year_ave), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.55)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_timesig <- smooth.basis(samples, as.vector(timesig_year_ave), myfdPar)
+fdafd_timesig<-myfd1_timesig$fd
+plot(fdafd_timesig, main = "Smooth timesig Sentiment") #final line after fda
+```
+
+Variables rock
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+rock_year = as.factor(rock$Year)
+
+hotness_year_rock = cbind(rock$Hotness, rock$Year)
+hotness_year_rock = hotness_year_rock[order(hotness_year_rock[,2]),]
+colnames(hotness_year_rock) = c("Hotness", "Year")
+hotness_year_count_rock = cbind(1, hotness_year_rock[,2])
+hotness_year_count_rock = tapply(hotness_year_count_rock[,1], hotness_year_count_rock[,2],sum)
+hotness_year_ave_rock = tapply(hotness_year_rock[,1], hotness_year_rock[,2],mean)
+plot(levels(rock_year), hotness_year_ave_rock, type = 'l')
+
+hotness_year_rockc = cbind(rockc$Hotness, rockc$Year)
+hotness_year_rockc = hotness_year_rockc[order(hotness_year_rockc[,2]),]
+colnames(hotness_year_rockc) = c("Hotness", "Year")
+hotness_year_count_rockc = cbind(1, hotness_year_rockc[,2])
+hotness_year_count_rockc = tapply(hotness_year_count_rockc[,1], hotness_year_count_rockc[,2],sum)
+hotness_year_ave_rockc = tapply(hotness_year_rockc[,1], hotness_year_rockc[,2],mean)
+plot(levels(rock_year), hotness_year_ave_rockc, type = 'l')
+
+tempo_year_rock = cbind(rock$Tempo, rock$Year)
+tempo_year_rock = tempo_year_rock[order(tempo_year_rock[,2]),]
+colnames(tempo_year_rock) = c("Tempo", "Year")
+
+tempo_year_count_rock = cbind(1, tempo_year_rock[,2])
+tempo_year_count_rock = tapply(tempo_year_count_rock[,1], tempo_year_count_rock[,2],sum)
+tempo_year_ave_rock = tapply(tempo_year_rock[,1], tempo_year_rock[,2],mean)
+plot(levels(rock_year), tempo_year_ave_rock, type = 'l')
+
+keysig_year_rock = cbind(rock$KeySignature, rock$Year)
+keysig_year_rock = keysig_year_rock[order(keysig_year_rock[,2]),]
+colnames(keysig_year_rock) = c("Key Signature", "Year")
+
+keysig_year_count_rock = cbind(1, keysig_year_rock[,2])
+keysig_year_count_rock = tapply(keysig_year_count_rock[,1], keysig_year_count_rock[,2],sum)
+keysig_year_ave_rock = tapply(keysig_year_rock[,1], keysig_year_rock[,2],mean)
+plot(levels(rock_year), keysig_year_ave_rock, type = 'l')
+
+loudness_year_rock = cbind(rock$Loudness, rock$Year)
+loudness_year_rock = loudness_year_rock[order(loudness_year_rock[,2]),]
+colnames(loudness_year_rock) = c("Loudness", "Year")
+
+loudness_year_count_rock = cbind(1, loudness_year_rock[,2])
+loudness_year_count_rock = tapply(loudness_year_count_rock[,1], loudness_year_count_rock[,2],sum)
+loudness_year_ave_rock = tapply(loudness_year_rock[,1], loudness_year_rock[,2],mean)
+plot(levels(rock_year), loudness_year_ave_rock, type = 'l')
+
+mode_year_rock = cbind(rock$Mode, rock$Year)
+mode_year_rock = mode_year_rock[order(mode_year_rock[,2]),]
+colnames(mode_year_rock) = c("Mode", "Year")
+
+mode_year_count_rock = cbind(1, mode_year_rock[,2])
+mode_year_count_rock = tapply(mode_year_count_rock[,1], mode_year_count_rock[,2],sum)
+mode_year_ave_rock = tapply(mode_year_rock[,1], mode_year_rock[,2],mean)
+plot(levels(rock_year), mode_year_ave_rock, type = 'l')
+
+timesig_year_rock = cbind(rock$TimeSignature, rock$Year)
+timesig_year_rock = timesig_year_rock[order(timesig_year_rock[,2]),]
+colnames(timesig_year_rock) = c("Time Signature", "Year")
+
+timesig_year_count_rock = cbind(1, timesig_year_rock[,2])
+timesig_year_count_rock = tapply(timesig_year_count_rock[,1], timesig_year_count_rock[,2],sum)
+timesig_year_ave_rock = tapply(timesig_year_rock[,1], timesig_year_rock[,2],mean)
+plot(levels(rock_year), timesig_year_ave_rock, type = 'l')
+
+par(mar=c(5,4,4,5)+.1)
+plot(levels(rock_year), timesig_year_ave_rock, type = 'l', main = "Tempo vs. Loudness of Popular Rock Music", xlab = "Year", ylab = "Average Tempo")
+par(new=TRUE)
+plot(levels(rock_year), loudness_year_ave_rock, type = 'l', col = "red", xaxt = 'n', yaxt = 'n', xlab = '', ylab = '')
+mtext("Average Loudness", side = 4, line = 3)
+axis(4)
+legend('bottomright',col=c("red","black"),lty=1,legend=c("Average Loudness","Average Tempo"), cex = 0.75)
+```
+
+Rock Analysis
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+samplerock = sample(nrow(rockc), 0.75*nrow(rockc))
+trainrock = rockc[samplerock,]
+testrock = rockc[samplerock,]
+
+modelrock1 = lm(Hotness~Year, data = rockc)
+summary(modelrock1)
+
+modelrock2 = lm(Hotness~Loudness+Year+TimeSignature, data = rockc)
+summary(modelrock2)
+
+modelrock = lm(Hotness~Tempo+Loudness+KeySignature+Mode+TimeSignature+Year, data = rockc)
+summary(modelrock)
+anova(modelrock1, modelrock2, modelrock)
+#Loudness, Year, TimeSig
+
+glm.fit = glm(Hotness~Loudness+Year+TimeSignature, data = rockc)
+degree=1:5
+cv.error5=rep(0,5)
+for(d in degree){
+glm.fit = glm(Hotness~poly(Loudness+Year+TimeSignature, d), data=rockc)
+cv.error5[d] = cv.glm(rockc,glm.fit,K=5)$delta[1]
+}
+plot(degree, cv.error5)
+
+rockglmtrain = glm(Hotness~poly(Loudness+Year+TimeSignature, 4), data=trainrock)
+rockglmpredict = predict(rockglmtrain, newdata = testrock, se.fit = TRUE)
+mse.rockglm = sum((testrock$Hotness-rockglmpredict$fit)^2)/length(testrock$Hotness)
+error.rockglm = sqrt(mse.rockglm)
+
+#LDA
+lda_modelrock = lda(as.factor(Quality)~Year+Loudness+TimeSignature, data = trainrock)
+predict_lda_modelrock = predict(lda_modelrock, newdata = testrock)
+names(predict_lda_modelrock)
+ldatable = table(testrock$Quality,predict_lda_modelrock$class)
+errorldarock = sum(ldatable[row(ldatable) != col(ldatable)]) / sum(ldatable)
+
+#QDA
+qda_modelrock = qda(as.factor(Quality)~Year+Loudness+TimeSignature, data = trainrock)
+predict_qda_modelrock = predict(qda_modelrock, newdata = testrock)
+names(predict_qda_modelrock)
+qdatable = table(testrock$Quality,predict_qda_modelrock$class)
+errorqdarock = sum(qdatable[row(qdatable) != col(qdatable)]) / sum(qdatable)
+```
+
+Variables Dance
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+dance_year = as.factor(dance$Year)
+dance_yearc = as.factor(dancec$Year)
+
+hotness_year_dance = cbind(dance$Hotness, dance$Year)
+hotness_year_dance = hotness_year_dance[order(hotness_year_dance[,2]),]
+colnames(hotness_year_dance) = c("Hotness", "Year")
+hotness_year_count_dance = cbind(1, hotness_year_dance[,2])
+hotness_year_count_dance = tapply(hotness_year_count_dance[,1], hotness_year_count_dance[,2],sum)
+hotness_year_ave_dance = tapply(hotness_year_dance[,1], hotness_year_dance[,2],mean)
+plot(levels(dance_year), hotness_year_ave_dance, type = 'l')
+
+hotness_year_dancec = cbind(dancec$Hotness, dancec$Year)
+hotness_year_dancec = hotness_year_dancec[order(hotness_year_dancec[,2]),]
+colnames(hotness_year_dancec) = c("Hotness", "Year")
+hotness_year_count_dancec = cbind(1, hotness_year_dancec[,2])
+hotness_year_count_dancec = tapply(hotness_year_count_dancec[,1], hotness_year_count_dancec[,2],sum)
+hotness_year_ave_dancec = tapply(hotness_year_dancec[,1], hotness_year_dancec[,2],mean)
+plot(levels(dance_yearc), hotness_year_ave_dancec, type = 'l')
+
+tempo_year_dance = cbind(dance$Tempo, dance$Year)
+tempo_year_dance = tempo_year_dance[order(tempo_year_dance[,2]),]
+colnames(tempo_year_dance) = c("Tempo", "Year")
+
+tempo_year_count_dance = cbind(1, tempo_year_dance[,2])
+tempo_year_count_dance = tapply(tempo_year_count_dance[,1], tempo_year_count_dance[,2],sum)
+tempo_year_ave_dance = tapply(tempo_year_dance[,1], tempo_year_dance[,2],mean)
+plot(levels(dance_year), tempo_year_ave_dance, type = 'l')
+
+keysig_year_dance = cbind(dance$KeySignature, dance$Year)
+keysig_year_dance = keysig_year_dance[order(keysig_year_dance[,2]),]
+colnames(keysig_year_dance) = c("Key Signature", "Year")
+
+keysig_year_count_dance = cbind(1, keysig_year_dance[,2])
+keysig_year_count_dance = tapply(keysig_year_count_dance[,1], keysig_year_count_dance[,2],sum)
+keysig_year_ave_dance = tapply(keysig_year_dance[,1], keysig_year_dance[,2],mean)
+plot(levels(dance_year), keysig_year_ave_dance, type = 'l')
+
+loudness_year_dance = cbind(dance$Loudness, dance$Year)
+loudness_year_dance = loudness_year_dance[order(loudness_year_dance[,2]),]
+colnames(loudness_year_dance) = c("Loudness", "Year")
+
+loudness_year_count_dance = cbind(1, loudness_year_dance[,2])
+loudness_year_count_dance = tapply(loudness_year_count_dance[,1], loudness_year_count_dance[,2],sum)
+loudness_year_ave_dance = tapply(loudness_year_dance[,1], loudness_year_dance[,2],mean)
+plot(levels(dance_year), loudness_year_ave_dance, type = 'l')
+
+mode_year_dance = cbind(dance$Mode, dance$Year)
+mode_year_dance = mode_year_dance[order(mode_year_dance[,2]),]
+colnames(mode_year_dance) = c("Mode", "Year")
+
+mode_year_count_dance = cbind(1, mode_year_dance[,2])
+mode_year_count_dance = tapply(mode_year_count_dance[,1], mode_year_count_dance[,2],sum)
+mode_year_ave_dance = tapply(mode_year_dance[,1], mode_year_dance[,2],mean)
+plot(levels(dance_year), mode_year_ave_dance, type = 'l')
+
+timesig_year_dance = cbind(dance$TimeSignature, dance$Year)
+timesig_year_dance = timesig_year_dance[order(timesig_year_dance[,2]),]
+colnames(timesig_year_dance) = c("Time Signature", "Year")
+
+timesig_year_count_dance = cbind(1, timesig_year_dance[,2])
+timesig_year_count_dance = tapply(timesig_year_count_dance[,1], timesig_year_count_dance[,2],sum)
+timesig_year_ave_dance = tapply(timesig_year_dance[,1], timesig_year_dance[,2],mean)
+plot(levels(dance_year), timesig_year_ave_dance, type = 'l')
+
+plot(levels(dance_year), tempo_year_ave_dance, type = 'l')
+par(new=TRUE)
+plot(levels(dance_year), keysig_year_ave_dance, type = 'l', col = "red", yaxt = 'n', ann = FALSE)
+axis(4)
+```
+
+Dance Analysis
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+sampledance = sample(nrow(dancec), 0.75*nrow(dancec))
+traindance = dancec[sampledance,]
+testdance = dancec[sampledance,]
+
+modeldance1 = lm(Hotness~Year, data = dancec)
+summary(modeldance1)
+
+modeldance2 = lm(Hotness~Loudness+Year+KeySignature, data = dancec)
+summary(modeldance2)
+
+modeldance = lm(Hotness~Tempo+Loudness+KeySignature+Mode+TimeSignature+Year, data = dancec)
+summary(modeldance)
+anova(modeldance1, modeldance2, modeldance)
+
+#Loudness, Year, Key Signature
+dancelmtrain = lm(Hotness~Loudness+Year+KeySignature, data = traindance)
+dancelmpredict = predict(dancelmtrain, newdata = testdance)
+mse.dancelm = sum((testdance$Hotness-dancelmpredict)^2)/length(testdance$Hotness)
+error.dancelm = sqrt(mse.dancelm)
+
+glm.fit = glm(Hotness~Loudness+Year+KeySignature, data = dancec)
+degree=1:5
+cv.error5=rep(0,5)
+for(d in degree){
+  glm.fit = glm(Hotness~poly(Loudness+Year+KeySignature, d), data=dancec)
+  cv.error5[d] = cv.glm(dancec,glm.fit,K=5)$delta[1]
+}
+plot(degree, cv.error5)
+
+danceglmtrain = glm(Hotness~poly(Loudness+Year+KeySignature, 4), data=traindance)
+danceglmpredict = predict(danceglmtrain, newdata = testdance, se.fit = TRUE)
+mse.danceglm = sum((testdance$Hotness-danceglmpredict$fit)^2)/length(testdance$Hotness)
+error.danceglm = sqrt(mse.danceglm)
+```
+
+Hip Hop/Rap
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+hip_rap_year = as.factor(hip_rap$Year)
+hip_rap_yearc = as.factor(hip_rapc$Year)
+
+hotness_year_hip_rap = cbind(hip_rap$Hotness, hip_rap$Year)
+hotness_year_hip_rap = hotness_year_hip_rap[order(hotness_year_hip_rap[,2]),]
+colnames(hotness_year_hip_rap) = c("Hotness", "Year")
+hotness_year_count_hip_rap = cbind(1, hotness_year_hip_rap[,2])
+hotness_year_count_hip_rap = tapply(hotness_year_count_hip_rap[,1], hotness_year_count_hip_rap[,2],sum)
+hotness_year_ave_hip_rap = tapply(hotness_year_hip_rap[,1], hotness_year_hip_rap[,2],mean)
+plot(levels(hip_rap_year), hotness_year_ave_hip_rap, type = 'l')
+
+hotness_year_hip_rapc = cbind(hip_rapc$Hotness, hip_rapc$Year)
+hotness_year_hip_rapc = hotness_year_hip_rapc[order(hotness_year_hip_rapc[,2]),]
+colnames(hotness_year_hip_rapc) = c("Hotness", "Year")
+hotness_year_count_hip_rapc = cbind(1, hotness_year_hip_rapc[,2])
+hotness_year_count_hip_rapc = tapply(hotness_year_count_hip_rapc[,1], hotness_year_count_hip_rapc[,2],sum)
+hotness_year_ave_hip_rapc = tapply(hotness_year_hip_rapc[,1], hotness_year_hip_rapc[,2],mean)
+plot(levels(hip_rap_yearc), hotness_year_ave_hip_rapc, type = 'l')
+
+tempo_year_hip_rap = cbind(hip_rap$Tempo, hip_rap$Year)
+tempo_year_hip_rap = tempo_year_hip_rap[order(tempo_year_hip_rap[,2]),]
+colnames(tempo_year_hip_rap) = c("Tempo", "Year")
+
+tempo_year_count_hip_rap = cbind(1, tempo_year_hip_rap[,2])
+tempo_year_count_hip_rap = tapply(tempo_year_count_hip_rap[,1], tempo_year_count_hip_rap[,2],sum)
+tempo_year_ave_hip_rap = tapply(tempo_year_hip_rap[,1], tempo_year_hip_rap[,2],mean)
+plot(levels(hip_rap_year), tempo_year_ave_hip_rap, type = 'l')
+
+keysig_year_hip_rap = cbind(hip_rap$KeySignature, hip_rap$Year)
+keysig_year_hip_rap = keysig_year_hip_rap[order(keysig_year_hip_rap[,2]),]
+colnames(keysig_year_hip_rap) = c("Key Signature", "Year")
+
+keysig_year_count_hip_rap = cbind(1, keysig_year_hip_rap[,2])
+keysig_year_count_hip_rap = tapply(keysig_year_count_hip_rap[,1], keysig_year_count_hip_rap[,2],sum)
+keysig_year_ave_hip_rap = tapply(keysig_year_hip_rap[,1], keysig_year_hip_rap[,2],mean)
+plot(levels(hip_rap_year), keysig_year_ave_hip_rap, type = 'l')
+
+loudness_year_hip_rap = cbind(hip_rap$Loudness, hip_rap$Year)
+loudness_year_hip_rap = loudness_year_hip_rap[order(loudness_year_hip_rap[,2]),]
+colnames(loudness_year_hip_rap) = c("Loudness", "Year")
+
+loudness_year_count_hip_rap = cbind(1, loudness_year_hip_rap[,2])
+loudness_year_count_hip_rap = tapply(loudness_year_count_hip_rap[,1], loudness_year_count_hip_rap[,2],sum)
+loudness_year_ave_hip_rap = tapply(loudness_year_hip_rap[,1], loudness_year_hip_rap[,2],mean)
+plot(levels(hip_rap_year), loudness_year_ave_hip_rap, type = 'l')
+
+mode_year_hip_rap = cbind(hip_rap$Mode, hip_rap$Year)
+mode_year_hip_rap = mode_year_hip_rap[order(mode_year_hip_rap[,2]),]
+colnames(mode_year_hip_rap) = c("Mode", "Year")
+
+mode_year_count_hip_rap = cbind(1, mode_year_hip_rap[,2])
+mode_year_count_hip_rap = tapply(mode_year_count_hip_rap[,1], mode_year_count_hip_rap[,2],sum)
+mode_year_ave_hip_rap = tapply(mode_year_hip_rap[,1], mode_year_hip_rap[,2],mean)
+plot(levels(hip_rap_year), mode_year_ave_hip_rap, type = 'l')
+
+timesig_year_hip_rap = cbind(hip_rap$TimeSignature, hip_rap$Year)
+timesig_year_hip_rap = timesig_year_hip_rap[order(timesig_year_hip_rap[,2]),]
+colnames(timesig_year_hip_rap) = c("Time Signature", "Year")
+
+timesig_year_count_hip_rap = cbind(1, timesig_year_hip_rap[,2])
+timesig_year_count_hip_rap = tapply(timesig_year_count_hip_rap[,1], timesig_year_count_hip_rap[,2],sum)
+timesig_year_ave_hip_rap = tapply(timesig_year_hip_rap[,1], timesig_year_hip_rap[,2],mean)
+plot(levels(hip_rap_year), timesig_year_ave_hip_rap, type = 'l')
+
+plot(levels(hip_rap_year), tempo_year_ave_hip_rap, type = 'l')
+par(new=TRUE)
+plot(levels(hip_rap_year), keysig_year_ave_hip_rap, type = 'l', col = "red", yaxt = 'n', ann = FALSE)
+axis(4)
+```
+
+Hip Hop/Rap Analysis
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+samplehip_rap = sample(nrow(hip_rapc), 0.75*nrow(hip_rapc))
+trainhip_rap = hip_rapc[samplehip_rap,]
+testhip_rap = hip_rapc[samplehip_rap,]
+
+modelhip_rap1 = lm(Hotness~Year, data = hip_rapc)
+summary(modelhip_rap1)
+
+modelhip_rap2 = lm(Hotness~Loudness+Year, data = hip_rapc)
+summary(modelhip_rap2)
+
+modelhip_rap = lm(Hotness~Tempo+Loudness+KeySignature+Mode+TimeSignature+Year, data = hip_rapc)
+summary(modelhip_rap)
+anova(modelhip_rap1, modelhip_rap2, modelhip_rap)
+#Loudness
+
+hip_raplmtrain = lm(Hotness~Loudness+Year, data = trainhip_rap)
+hip_raplmpredict = predict(hip_raplmtrain, newdata = testhip_rap)
+mse.hip_raplm = sum((testhip_rap$Hotness-hip_raplmpredict)^2)/length(testhip_rap$Hotness)
+error.hip_raplm = sqrt(mse.hip_raplm)
+
+glm.fit = glm(Hotness~Loudness+Year, data = hip_rapc)
+degree=1:5
+cv.error5=rep(0,5)
+for(d in degree){
+  glm.fit = glm(Hotness~poly(Loudness+Year, d), data=hip_rapc)
+  cv.error5[d] = cv.glm(hip_rapc,glm.fit,K=5)$delta[1]
+}
+plot(degree, cv.error5)
+
+hip_rapglmtrain = glm(Hotness~poly(Loudness+Year, 5), data=trainhip_rap)
+hip_rapglmpredict = predict(hip_rapglmtrain, newdata = testhip_rap, se.fit = TRUE)
+mse.hip_rapglm = sum((testhip_rap$Hotness-hip_rapglmpredict$fit)^2)/length(testhip_rap$Hotness)
+error.hip_rapglm = sqrt(mse.hip_rapglm)
+```
+
+Pop Genre
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+pop_year = as.factor(pop$Year)
+
+hotness_year_pop = cbind(pop$Hotness, pop$Year)
+hotness_year_pop = hotness_year_pop[order(hotness_year_pop[,2]),]
+colnames(hotness_year_pop) = c("Hotness", "Year")
+hotness_year_count_pop = cbind(1, hotness_year_pop[,2])
+hotness_year_count_pop = tapply(hotness_year_count_pop[,1], hotness_year_count_pop[,2],sum)
+hotness_year_ave_pop = tapply(hotness_year_pop[,1], hotness_year_pop[,2],mean)
+plot(levels(pop_year), hotness_year_ave_pop, type = 'l')
+
+hotness_year_popc = cbind(popc$Hotness, popc$Year)
+hotness_year_popc = hotness_year_popc[order(hotness_year_popc[,2]),]
+colnames(hotness_year_popc) = c("Hotness", "Year")
+hotness_year_count_popc = cbind(1, hotness_year_popc[,2])
+hotness_year_count_popc = tapply(hotness_year_count_popc[,1], hotness_year_count_popc[,2],sum)
+hotness_year_ave_popc = tapply(hotness_year_popc[,1], hotness_year_popc[,2],mean)
+plot(levels(pop_year), hotness_year_ave_popc, type = 'l')
+
+tempo_year_pop = cbind(pop$Tempo, pop$Year)
+tempo_year_pop = tempo_year_pop[order(tempo_year_pop[,2]),]
+colnames(tempo_year_pop) = c("Tempo", "Year")
+
+tempo_year_count_pop = cbind(1, tempo_year_pop[,2])
+tempo_year_count_pop = tapply(tempo_year_count_pop[,1], tempo_year_count_pop[,2],sum)
+tempo_year_ave_pop = tapply(tempo_year_pop[,1], tempo_year_pop[,2],mean)
+plot(levels(pop_year), tempo_year_ave_pop, type = 'l')
+
+keysig_year_pop = cbind(pop$KeySignature, pop$Year)
+keysig_year_pop = keysig_year_pop[order(keysig_year_pop[,2]),]
+colnames(keysig_year_pop) = c("Key Signature", "Year")
+
+keysig_year_count_pop = cbind(1, keysig_year_pop[,2])
+keysig_year_count_pop = tapply(keysig_year_count_pop[,1], keysig_year_count_pop[,2],sum)
+keysig_year_ave_pop = tapply(keysig_year_pop[,1], keysig_year_pop[,2],mean)
+plot(levels(pop_year), keysig_year_ave_pop, type = 'l')
+
+loudness_year_pop = cbind(pop$Loudness, pop$Year)
+loudness_year_pop = loudness_year_pop[order(loudness_year_pop[,2]),]
+colnames(loudness_year_pop) = c("Loudness", "Year")
+
+loudness_year_count_pop = cbind(1, loudness_year_pop[,2])
+loudness_year_count_pop = tapply(loudness_year_count_pop[,1], loudness_year_count_pop[,2],sum)
+loudness_year_ave_pop = tapply(loudness_year_pop[,1], loudness_year_pop[,2],mean)
+plot(levels(pop_year), loudness_year_ave_pop, type = 'l')
+
+mode_year_pop = cbind(pop$Mode, pop$Year)
+mode_year_pop = mode_year_pop[order(mode_year_pop[,2]),]
+colnames(mode_year_pop) = c("Mode", "Year")
+
+mode_year_count_pop = cbind(1, mode_year_pop[,2])
+mode_year_count_pop = tapply(mode_year_count_pop[,1], mode_year_count_pop[,2],sum)
+mode_year_ave_pop = tapply(mode_year_pop[,1], mode_year_pop[,2],mean)
+plot(levels(pop_year), mode_year_ave_pop, type = 'l')
+
+timesig_year_pop = cbind(pop$TimeSignature, pop$Year)
+timesig_year_pop = timesig_year_pop[order(timesig_year_pop[,2]),]
+colnames(timesig_year_pop) = c("Time Signature", "Year")
+
+timesig_year_count_pop = cbind(1, timesig_year_pop[,2])
+timesig_year_count_pop = tapply(timesig_year_count_pop[,1], timesig_year_count_pop[,2],sum)
+timesig_year_ave_pop = tapply(timesig_year_pop[,1], timesig_year_pop[,2],mean)
+plot(levels(pop_year), timesig_year_ave_pop, type = 'l')
+
+plot(levels(pop_year), tempo_year_ave_pop, type = 'l')
+par(new=TRUE)
+plot(levels(pop_year), keysig_year_ave_pop, type = 'l', col = "red", yaxt = 'n', ann = FALSE)
+axis(4)
+```
+
+Pop Analysis
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+samplepop = sample(nrow(popc), 0.75*nrow(popc))
+trainpop = popc[samplepop,]
+testpop = popc[samplepop,]
+
+modelpop1 = lm(Hotness~Year, data = popc)
+summary(modelpop1)
+
+modelpop2 = lm(Hotness~Loudness+Year+Tempo, data = popc)
+summary(modelpop2)
+
+modelpop = lm(Hotness~Tempo+Loudness+KeySignature+Mode+TimeSignature+Year, data = popc)
+summary(modelpop)
+anova(modelpop1, modelpop2, modelpop)
+#Loudness, Year, Tempo
+
+poplmtrain = lm(Hotness~Loudness+Year+Tempo, data = trainpop)
+poplmpredict = predict(poplmtrain, newdata = testpop)
+mse.poplm = sum((testpop$Hotness-poplmpredict)^2)/length(testpop$Hotness)
+error.poplm = sqrt(mse.poplm)
+
+glm.fit = glm(Hotness~Loudness+Year+Tempo, data = popc)
+degree=1:5
+cv.error5=rep(0,5)
+for(d in degree){
+  glm.fit = glm(Hotness~poly(Loudness+Year+Tempo, d), data=popc)
+  cv.error5[d] = cv.glm(popc,glm.fit,K=5)$delta[1]
+}
+plot(degree, cv.error5)
+
+popglmtrain = glm(Hotness~poly(Loudness+Year+Tempo, 3), data=trainpop)
+popglmpredict = predict(popglmtrain, newdata = testpop, se.fit = TRUE)
+mse.popglm = sum((testpop$Hotness-popglmpredict$fit)^2)/length(testpop$Hotness)
+error.popglm = sqrt(mse.popglm)
+
+```
+
+Singer/Songwriter Genre
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+sing_year = as.factor(sing$Year)
+sing_yearc = as.factor(singc$Year)
+
+hotness_year_sing = cbind(sing$Hotness, sing$Year)
+hotness_year_sing = hotness_year_sing[order(hotness_year_sing[,2]),]
+colnames(hotness_year_sing) = c("Hotness", "Year")
+hotness_year_count_sing = cbind(1, hotness_year_sing[,2])
+hotness_year_count_sing = tapply(hotness_year_count_sing[,1], hotness_year_count_sing[,2],sum)
+hotness_year_ave_sing = tapply(hotness_year_sing[,1], hotness_year_sing[,2],mean)
+plot(levels(sing_year), hotness_year_ave_sing, type = 'l')
+
+hotness_year_singc = cbind(singc$Hotness, singc$Year)
+hotness_year_singc = hotness_year_singc[order(hotness_year_singc[,2]),]
+colnames(hotness_year_singc) = c("Hotness", "Year")
+hotness_year_count_singc = cbind(1, hotness_year_singc[,2])
+hotness_year_count_singc = tapply(hotness_year_count_singc[,1], hotness_year_count_singc[,2],sum)
+hotness_year_ave_singc = tapply(hotness_year_singc[,1], hotness_year_singc[,2],mean)
+plot(levels(sing_yearc), hotness_year_ave_singc, type = 'l')
+
+tempo_year_sing = cbind(sing$Tempo, sing$Year)
+tempo_year_sing = tempo_year_sing[order(tempo_year_sing[,2]),]
+colnames(tempo_year_sing) = c("Tempo", "Year")
+
+tempo_year_count_sing = cbind(1, tempo_year_sing[,2])
+tempo_year_count_sing = tapply(tempo_year_count_sing[,1], tempo_year_count_sing[,2],sum)
+tempo_year_ave_sing = tapply(tempo_year_sing[,1], tempo_year_sing[,2],mean)
+plot(levels(sing_year), tempo_year_ave_sing, type = 'l')
+
+keysig_year_sing = cbind(sing$KeySignature, sing$Year)
+keysig_year_sing = keysig_year_sing[order(keysig_year_sing[,2]),]
+colnames(keysig_year_sing) = c("Key Signature", "Year")
+
+keysig_year_count_sing = cbind(1, keysig_year_sing[,2])
+keysig_year_count_sing = tapply(keysig_year_count_sing[,1], keysig_year_count_sing[,2],sum)
+keysig_year_ave_sing = tapply(keysig_year_sing[,1], keysig_year_sing[,2],mean)
+plot(levels(sing_year), keysig_year_ave_sing, type = 'l')
+
+loudness_year_sing = cbind(sing$Loudness, sing$Year)
+loudness_year_sing = loudness_year_sing[order(loudness_year_sing[,2]),]
+colnames(loudness_year_sing) = c("Loudness", "Year")
+
+loudness_year_count_sing = cbind(1, loudness_year_sing[,2])
+loudness_year_count_sing = tapply(loudness_year_count_sing[,1], loudness_year_count_sing[,2],sum)
+loudness_year_ave_sing = tapply(loudness_year_sing[,1], loudness_year_sing[,2],mean)
+plot(levels(sing_year), loudness_year_ave_sing, type = 'l')
+
+mode_year_sing = cbind(sing$Mode, sing$Year)
+mode_year_sing = mode_year_sing[order(mode_year_sing[,2]),]
+colnames(mode_year_sing) = c("Mode", "Year")
+
+mode_year_count_sing = cbind(1, mode_year_sing[,2])
+mode_year_count_sing = tapply(mode_year_count_sing[,1], mode_year_count_sing[,2],sum)
+mode_year_ave_sing = tapply(mode_year_sing[,1], mode_year_sing[,2],mean)
+plot(levels(sing_year), mode_year_ave_sing, type = 'l')
+
+timesig_year_sing = cbind(sing$TimeSignature, sing$Year)
+timesig_year_sing = timesig_year_sing[order(timesig_year_sing[,2]),]
+colnames(timesig_year_sing) = c("Time Signature", "Year")
+
+timesig_year_count_sing = cbind(1, timesig_year_sing[,2])
+timesig_year_count_sing = tapply(timesig_year_count_sing[,1], timesig_year_count_sing[,2],sum)
+timesig_year_ave_sing = tapply(timesig_year_sing[,1], timesig_year_sing[,2],mean)
+plot(levels(sing_year), timesig_year_ave_sing, type = 'l')
+
+plot(levels(sing_year), tempo_year_ave_sing, type = 'l')
+par(new=TRUE)
+plot(levels(sing_year), keysig_year_ave_sing, type = 'l', col = "red", yaxt = 'n', ann = FALSE)
+axis(4)
+```
+
+Singer/Songwriter Analysis
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+samplesing = sample(nrow(singc), 0.75*nrow(singc))
+trainsing = singc[samplesing,]
+testsing = singc[samplesing,]
+
+modelsing1 = lm(Hotness~Year, data = singc)
+summary(modelsing1)
+
+modelsing2 = lm(Hotness~Tempo+Year+Loudness, data = singc)
+summary(modelsing2)
+
+modelsing = lm(Hotness~Tempo+Loudness+KeySignature+Mode+TimeSignature+Year, data = singc)
+summary(modelsing)
+anova(modelsing1, modelsing2, modelsing)
+#Year, Loudness, Tempo
+
+singlmtrain = lm(Hotness~Loudness+Year+Tempo, data = trainsing)
+singlmpredict = predict(singlmtrain, newdata = testsing)
+mse.singlm = sum((testsing$Hotness-singlmpredict)^2)/length(testsing$Hotness)
+error.singlm = sqrt(mse.singlm)
+
+glm.fit = glm(Hotness~Loudness+Year+Tempo, data = singc)
+degree=1:5
+cv.error5=rep(0,5)
+for(d in degree){
+  glm.fit = glm(Hotness~poly(Loudness+Year+Tempo, d), data=singc)
+  cv.error5[d] = cv.glm(singc,glm.fit,K=5)$delta[1]
+}
+plot(degree, cv.error5)
+
+singglmtrain = glm(Hotness~poly(Loudness+Year+Tempo, 2), data=trainsing)
+singglmpredict = predict(singglmtrain, newdata = testsing, se.fit = TRUE)
+mse.singglm = sum((testsing$Hotness-singglmpredict$fit)^2)/length(testsing$Hotness)
+error.singglm = sqrt(mse.singglm)
+```
+
+Jazz Genre
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+jazz_year = as.factor(jazz$Year)
+
+hotness_year_jazz = cbind(jazz$Hotness, jazz$Year)
+hotness_year_jazz = hotness_year_jazz[order(hotness_year_jazz[,2]),]
+colnames(hotness_year_jazz) = c("Hotness", "Year")
+hotness_year_count_jazz = cbind(1, hotness_year_jazz[,2])
+hotness_year_count_jazz = tapply(hotness_year_count_jazz[,1], hotness_year_count_jazz[,2],sum)
+hotness_year_ave_jazz = tapply(hotness_year_jazz[,1], hotness_year_jazz[,2],mean)
+plot(levels(jazz_year), hotness_year_ave_jazz, type = 'l')
+
+hotness_year_jazzc = cbind(jazzc$Hotness, jazzc$Year)
+hotness_year_jazzc = hotness_year_jazzc[order(hotness_year_jazzc[,2]),]
+colnames(hotness_year_jazzc) = c("Hotness", "Year")
+hotness_year_count_jazzc = cbind(1, hotness_year_jazzc[,2])
+hotness_year_count_jazzc = tapply(hotness_year_count_jazzc[,1], hotness_year_count_jazzc[,2],sum)
+hotness_year_ave_jazzc = tapply(hotness_year_jazzc[,1], hotness_year_jazzc[,2],mean)
+plot(levels(jazz_year), hotness_year_ave_jazzc, type = 'l')
+
+tempo_year_jazz = cbind(jazz$Tempo, jazz$Year)
+tempo_year_jazz = tempo_year_jazz[order(tempo_year_jazz[,2]),]
+colnames(tempo_year_jazz) = c("Tempo", "Year")
+
+tempo_year_count_jazz = cbind(1, tempo_year_jazz[,2])
+tempo_year_count_jazz = tapply(tempo_year_count_jazz[,1], tempo_year_count_jazz[,2],sum)
+tempo_year_ave_jazz = tapply(tempo_year_jazz[,1], tempo_year_jazz[,2],mean)
+plot(levels(jazz_year), tempo_year_ave_jazz, type = 'l')
+
+keysig_year_jazz = cbind(jazz$KeySignature, jazz$Year)
+keysig_year_jazz = keysig_year_jazz[order(keysig_year_jazz[,2]),]
+colnames(keysig_year_jazz) = c("Key Signature", "Year")
+
+keysig_year_count_jazz = cbind(1, keysig_year_jazz[,2])
+keysig_year_count_jazz = tapply(keysig_year_count_jazz[,1], keysig_year_count_jazz[,2],sum)
+keysig_year_ave_jazz = tapply(keysig_year_jazz[,1], keysig_year_jazz[,2],mean)
+plot(levels(jazz_year), keysig_year_ave_jazz, type = 'l')
+
+loudness_year_jazz = cbind(jazz$Loudness, jazz$Year)
+loudness_year_jazz = loudness_year_jazz[order(loudness_year_jazz[,2]),]
+colnames(loudness_year_jazz) = c("Loudness", "Year")
+
+loudness_year_count_jazz = cbind(1, loudness_year_jazz[,2])
+loudness_year_count_jazz = tapply(loudness_year_count_jazz[,1], loudness_year_count_jazz[,2],sum)
+loudness_year_ave_jazz = tapply(loudness_year_jazz[,1], loudness_year_jazz[,2],mean)
+plot(levels(jazz_year), loudness_year_ave_jazz, type = 'l')
+
+mode_year_jazz = cbind(jazz$Mode, jazz$Year)
+mode_year_jazz = mode_year_jazz[order(mode_year_jazz[,2]),]
+colnames(mode_year_jazz) = c("Mode", "Year")
+
+mode_year_count_jazz = cbind(1, mode_year_jazz[,2])
+mode_year_count_jazz = tapply(mode_year_count_jazz[,1], mode_year_count_jazz[,2],sum)
+mode_year_ave_jazz = tapply(mode_year_jazz[,1], mode_year_jazz[,2],mean)
+plot(levels(jazz_year), mode_year_ave_jazz, type = 'l')
+
+timesig_year_jazz = cbind(jazz$TimeSignature, jazz$Year)
+timesig_year_jazz = timesig_year_jazz[order(timesig_year_jazz[,2]),]
+colnames(timesig_year_jazz) = c("Time Signature", "Year")
+
+timesig_year_count_jazz = cbind(1, timesig_year_jazz[,2])
+timesig_year_count_jazz = tapply(timesig_year_count_jazz[,1], timesig_year_count_jazz[,2],sum)
+timesig_year_ave_jazz = tapply(timesig_year_jazz[,1], timesig_year_jazz[,2],mean)
+plot(levels(jazz_year), timesig_year_ave_jazz, type = 'l')
+
+plot(levels(jazz_year), tempo_year_ave_jazz, type = 'l')
+par(new=TRUE)
+plot(levels(jazz_year), keysig_year_ave_jazz, type = 'l', col = "red", yaxt = 'n', ann = FALSE)
+axis(4)
+```
+
+Jazz Analysis
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+samplejazz = sample(nrow(jazzc), 0.75*nrow(jazzc))
+trainjazz = jazzc[samplejazz,]
+testjazz = jazzc[samplejazz,]
+
+modeljazz1 = lm(Hotness~Loudness, data = jazzc)
+summary(modeljazz1)
+
+modeljazz2 = lm(Hotness~Loudness+Year+TimeSignature, data = jazzc)
+summary(modeljazz2)
+
+modeljazz = lm(Hotness~Tempo+Loudness+KeySignature+Mode+TimeSignature+Year, data = jazzc)
+summary(modeljazz)
+anova(modeljazz1, modeljazz2, modeljazz)
+#Loudness, Year - Year only a little
+
+jazzlmtrain = lm(Hotness~Loudness+Year+TimeSignature, data = trainjazz)
+jazzlmpredict = predict(jazzlmtrain, newdata = testjazz)
+mse.jazzlm = sum((testjazz$Hotness-jazzlmpredict)^2)/length(testjazz$Hotness)
+error.jazzlm = sqrt(mse.jazzlm)
+
+glm.fit = glm(Hotness~Loudness+Year+TimeSignature, data = jazzc)
+degree=1:5
+cv.error5=rep(0,5)
+for(d in degree){
+  glm.fit = glm(Hotness~poly(Loudness+Year+TimeSignature, d), data=jazzc)
+  cv.error5[d] = cv.glm(jazzc,glm.fit,K=5)$delta[1]
+}
+plot(degree, cv.error5)
+
+jazzglmtrain = glm(Hotness~poly(Loudness+Year+TimeSignature, 4), data=trainjazz)
+jazzglmpredict = predict(jazzglmtrain, newdata = testjazz, se.fit = TRUE)
+mse.jazzglm = sum((testjazz$Hotness-jazzglmpredict$fit)^2)/length(testjazz$Hotness)
+error.jazzglm = sqrt(mse.jazzglm)
+```
+
+Alternative Genre
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+alt_year = as.factor(alt$Year)
+alt_yearc = as.factor(altc$Year)
+
+hotness_year_alt = cbind(alt$Hotness, alt$Year)
+hotness_year_alt = hotness_year_alt[order(hotness_year_alt[,2]),]
+colnames(hotness_year_alt) = c("Hotness", "Year")
+hotness_year_count_alt = cbind(1, hotness_year_alt[,2])
+hotness_year_count_alt = tapply(hotness_year_count_alt[,1], hotness_year_count_alt[,2],sum)
+hotness_year_ave_alt = tapply(hotness_year_alt[,1], hotness_year_alt[,2],mean)
+plot(levels(alt_year), hotness_year_ave_alt, type = 'l')
+
+hotness_year_altc = cbind(altc$Hotness, altc$Year)
+hotness_year_altc = hotness_year_altc[order(hotness_year_altc[,2]),]
+colnames(hotness_year_altc) = c("Hotness", "Year")
+hotness_year_count_altc = cbind(1, hotness_year_altc[,2])
+hotness_year_count_altc = tapply(hotness_year_count_altc[,1], hotness_year_count_altc[,2],sum)
+hotness_year_ave_altc = tapply(hotness_year_altc[,1], hotness_year_altc[,2],mean)
+plot(levels(alt_yearc), hotness_year_ave_altc, type = 'l')
+
+tempo_year_alt = cbind(alt$Tempo, alt$Year)
+tempo_year_alt = tempo_year_alt[order(tempo_year_alt[,2]),]
+colnames(tempo_year_alt) = c("Tempo", "Year")
+
+tempo_year_count_alt = cbind(1, tempo_year_alt[,2])
+tempo_year_count_alt = tapply(tempo_year_count_alt[,1], tempo_year_count_alt[,2],sum)
+tempo_year_ave_alt = tapply(tempo_year_alt[,1], tempo_year_alt[,2],mean)
+plot(levels(alt_year), tempo_year_ave_alt, type = 'l')
+
+keysig_year_alt = cbind(alt$KeySignature, alt$Year)
+keysig_year_alt = keysig_year_alt[order(keysig_year_alt[,2]),]
+colnames(keysig_year_alt) = c("Key Signature", "Year")
+
+keysig_year_count_alt = cbind(1, keysig_year_alt[,2])
+keysig_year_count_alt = tapply(keysig_year_count_alt[,1], keysig_year_count_alt[,2],sum)
+keysig_year_ave_alt = tapply(keysig_year_alt[,1], keysig_year_alt[,2],mean)
+plot(levels(alt_year), keysig_year_ave_alt, type = 'l')
+
+loudness_year_alt = cbind(alt$Loudness, alt$Year)
+loudness_year_alt = loudness_year_alt[order(loudness_year_alt[,2]),]
+colnames(loudness_year_alt) = c("Loudness", "Year")
+
+loudness_year_count_alt = cbind(1, loudness_year_alt[,2])
+loudness_year_count_alt = tapply(loudness_year_count_alt[,1], loudness_year_count_alt[,2],sum)
+loudness_year_ave_alt = tapply(loudness_year_alt[,1], loudness_year_alt[,2],mean)
+plot(levels(alt_year), loudness_year_ave_alt, type = 'l')
+
+mode_year_alt = cbind(alt$Mode, alt$Year)
+mode_year_alt = mode_year_alt[order(mode_year_alt[,2]),]
+colnames(mode_year_alt) = c("Mode", "Year")
+
+mode_year_count_alt = cbind(1, mode_year_alt[,2])
+mode_year_count_alt = tapply(mode_year_count_alt[,1], mode_year_count_alt[,2],sum)
+mode_year_ave_alt = tapply(mode_year_alt[,1], mode_year_alt[,2],mean)
+plot(levels(alt_year), mode_year_ave_alt, type = 'l')
+
+timesig_year_alt = cbind(alt$TimeSignature, alt$Year)
+timesig_year_alt = timesig_year_alt[order(timesig_year_alt[,2]),]
+colnames(timesig_year_alt) = c("Time Signature", "Year")
+
+timesig_year_count_alt = cbind(1, timesig_year_alt[,2])
+timesig_year_count_alt = tapply(timesig_year_count_alt[,1], timesig_year_count_alt[,2],sum)
+timesig_year_ave_alt = tapply(timesig_year_alt[,1], timesig_year_alt[,2],mean)
+plot(levels(alt_year), timesig_year_ave_alt, type = 'l')
+
+plot(levels(alt_year), tempo_year_ave_alt, type = 'l')
+par(new=TRUE)
+plot(levels(alt_year), keysig_year_ave_alt, type = 'l', col = "red", yaxt = 'n', ann = FALSE)
+axis(4)
+```
+
+Alternative Analysis
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+samplealt = sample(nrow(altc), 0.75*nrow(altc))
+trainalt = altc[samplealt,]
+testalt = altc[samplealt,]
+
+modelalt1 = lm(Hotness~Year, data = altc)
+summary(modelalt1)
+
+modelalt2 = lm(Hotness~Loudness+Year+TimeSignature, data = altc)
+summary(modelalt2)
+
+modelalt = lm(Hotness~Tempo+Loudness+KeySignature+Mode+TimeSignature+Year, data = altc)
+summary(modelalt)
+anova(modelalt1, modelalt2, modelalt)
+#Loudness, Year, TimeSig, Tempo
+
+altlmtrain = lm(Hotness~Loudness+Year+TimeSignature, data = trainalt)
+altlmpredict = predict(altlmtrain, newdata = testalt)
+mse.altlm = sum((testalt$Hotness-altlmpredict)^2)/length(testalt$Hotness)
+error.altlm = sqrt(mse.altlm)
+
+glm.fit = glm(Hotness~Loudness+Year+TimeSignature, data = altc)
+degree=1:5
+cv.error5=rep(0,5)
+for(d in degree){
+  glm.fit = glm(Hotness~poly(Loudness+Year+TimeSignature, d), data=altc)
+  cv.error5[d] = cv.glm(altc,glm.fit,K=5)$delta[1]
+}
+plot(degree, cv.error5)
+
+altglmtrain = glm(Hotness~poly(Loudness+Year+TimeSignature, 4), data=trainalt)
+altglmpredict = predict(altglmtrain, newdata = testalt, se.fit = TRUE)
+mse.altglm = sum((testalt$Hotness-altglmpredict$fit)^2)/length(testalt$Hotness)
+error.altglm = sqrt(mse.altglm)
+```
+
+Smooth by Genre Attributes (Rock, Jazz, Pop)
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+norder <- 4 #order
+samples <- seq(1,50,1) #how many years, by each year
+nbasis <- length(samples) + norder-2 #formula to calculate basis number
+mybasis <- create.bspline.basis(c(1,50), nbasis, norder)
+
+fdamatri=fd(matrix(0, nbasis, 1),mybasis) #nbasis = years, 1 = 1 col of data
+#transfers data into fda format necessary to run fda
+#cv to choose lamda
+
+#Hotness of Rockc
+loglam = seq(-9.4,-9.0,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(hotness_year_ave_rockc), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-9.05)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_hotness_rockc <- smooth.basis(samples, as.vector(hotness_year_ave_rockc), myfdPar)
+fdafd_hotness_rockc<-myfd1_hotness_rockc$fd
+plot(fdafd_hotness_rockc, main = "Smooth hotness_rockc Sentiment") #final line after fda
+
+#Hotness Jazzc
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(hotness_year_ave_jazzc), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.6)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_hotness_jazzc <- smooth.basis(samples, as.vector(hotness_year_ave_jazzc), myfdPar)
+fdafd_hotness_jazzc<-myfd1_hotness_jazzc$fd
+plot(fdafd_hotness_jazzc, main = "Smooth hotness_jazzc Sentiment") #final line after fda
+
+#Hotness Popc
+loglam = seq(-9.4,-9.0,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(hotness_year_ave_popc), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-9.0)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_hotness_popc <- smooth.basis(samples, as.vector(hotness_year_ave_popc), myfdPar)
+fdafd_hotness_popc<-myfd1_hotness_popc$fd
+plot(fdafd_hotness_popc, main = "Smooth hotness_popc Sentiment") #final line after fda
+
+#Hotness Singc
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(hotness_year_ave_singc), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.8)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_hotness_singc <- smooth.basis(samples, as.vector(hotness_year_ave_singc), myfdPar)
+fdafd_hotness_singc<-myfd1_hotness_singc$fd
+plot(fdafd_hotness_singc, main = "Smooth hotness_singc Sentiment") #final line after fda
+
+#TEMPO Genre
+#Rock
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(tempo_year_ave_rock), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.6)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_tempo_rock <- smooth.basis(samples, as.vector(tempo_year_ave_rock), myfdPar)
+fdafd_tempo_rock<-myfd1_tempo_rock$fd
+plot(fdafd_tempo_rock, main = "Smooth tempo_rock Sentiment") #final line after fda
+
+#Jazz
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(tempo_year_ave_jazz), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.9)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_tempo_jazz <- smooth.basis(samples, as.vector(tempo_year_ave_jazz), myfdPar)
+fdafd_tempo_jazz<-myfd1_tempo_jazz$fd
+plot(fdafd_tempo_jazz, main = "Smooth tempo_jazz Sentiment") #final line after fda
+
+#Pop
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(tempo_year_ave_pop), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.65)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_tempo_pop <- smooth.basis(samples, as.vector(tempo_year_ave_pop), myfdPar)
+fdafd_tempo_pop<-myfd1_tempo_pop$fd
+plot(fdafd_tempo_pop, main = "Smooth tempo_pop Sentiment") #final line after fda
+
+#Loudness
+#Rock
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(loudness_year_ave_rock), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.8)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_loudness_rock <- smooth.basis(samples, as.vector(loudness_year_ave_rock), myfdPar)
+fdafd_loudness_rock<-myfd1_loudness_rock$fd
+plot(fdafd_loudness_rock, main = "Smooth loudness_rock Sentiment") #final line after fda
+
+#Jazz
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(loudness_year_ave_jazz), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.88)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_loudness_jazz <- smooth.basis(samples, as.vector(loudness_year_ave_jazz), myfdPar)
+fdafd_loudness_jazz<-myfd1_loudness_jazz$fd
+plot(fdafd_loudness_jazz, main = "Smooth loudness_jazz Sentiment") #final line after fda
+
+#Pop
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(loudness_year_ave_pop), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.8)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_loudness_pop <- smooth.basis(samples, as.vector(loudness_year_ave_pop), myfdPar)
+fdafd_loudness_pop<-myfd1_loudness_pop$fd
+plot(fdafd_loudness_pop, main = "Smooth loudness_pop Sentiment") #final line after fda
+
+#Time Signature
+#Rock
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(timesig_year_ave_rock), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.75)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_timesig_rock <- smooth.basis(samples, as.vector(timesig_year_ave_rock), myfdPar)
+fdafd_timesig_rock<-myfd1_timesig_rock$fd
+plot(fdafd_timesig_rock, main = "Smooth timesig_rock Sentiment") #final line after fda
+
+#Jazz
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(timesig_year_ave_jazz), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.6)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_timesig_jazz <- smooth.basis(samples, as.vector(timesig_year_ave_jazz), myfdPar)
+fdafd_timesig_jazz<-myfd1_timesig_jazz$fd
+plot(fdafd_timesig_jazz, main = "Smooth timesig_jazz Sentiment") #final line after fda
+
+#Pop
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(timesig_year_ave_pop), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.95)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_timesig_pop <- smooth.basis(samples, as.vector(timesig_year_ave_pop), myfdPar)
+fdafd_timesig_pop<-myfd1_timesig_pop$fd
+plot(fdafd_timesig_pop, main = "Smooth timesig_pop Sentiment") #final line after fda
+
+
+
+
+```
+
+Smooth by Genre Attributes (Dance, Hip Hop/Rap, Alternative, Singer/Songwriter)
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+norder <- 4 #order
+samples <- seq(1,31,1) #how many years, by each year
+nbasis <- length(samples) + norder-2 #formula to calculate basis number
+mybasis <- create.bspline.basis(c(1,31), nbasis, norder)
+
+fdamatri=fd(matrix(0, nbasis, 1),mybasis) #nbasis = years, 1 = 1 col of data
+#transfers data into fda format necessary to run fda
+#cv to choose lamda
+
+#Hotness
+#Dance
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(hotness_year_ave_dancec[18:48]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.55)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_hotness_dancec <- smooth.basis(samples, as.vector(hotness_year_ave_dancec[18:48]), myfdPar)
+fdafd_hotness_dancec<-myfd1_hotness_dancec$fd
+plot(fdafd_hotness_dancec, main = "Smooth hotness_dancec Sentiment") #final line after fda
+
+#Alternative
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(hotness_year_ave_altc[7:37]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.8)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_hotness_altc <- smooth.basis(samples, as.vector(hotness_year_ave_altc[7:37]), myfdPar)
+fdafd_hotness_altc<-myfd1_hotness_altc$fd
+plot(fdafd_hotness_altc, main = "Smooth hotness_altc Sentiment") #final line after fda
+
+#Hip Hop/Rap
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(hotness_year_ave_hip_rapc[8:38]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.8)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_hotness_hip_rapc <- smooth.basis(samples, as.vector(hotness_year_ave_hip_rapc[8:38]), myfdPar)
+fdafd_hotness_hip_rapc<-myfd1_hotness_hip_rapc$fd
+plot(fdafd_hotness_hip_rapc, main = "Smooth hotness_hip_rapc Sentiment") #final line after fda
+
+
+#Tempo
+#Dance
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(tempo_year_ave_dance[11:41]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.55)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_tempo_dance <- smooth.basis(samples, as.vector(tempo_year_ave_dance[11:41]), myfdPar)
+fdafd_tempo_dance<-myfd1_tempo_dance$fd
+plot(fdafd_tempo_dance, main = "Smooth tempo_dance Sentiment") #final line after fda
+
+#Sing/Songwriter
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(tempo_year_ave_sing[18:48]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.9)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_tempo_sing <- smooth.basis(samples, as.vector(tempo_year_ave_sing[18:48]), myfdPar)
+fdafd_tempo_sing<-myfd1_tempo_sing$fd
+plot(fdafd_tempo_sing, main = "Smooth tempos_sing Sentiment") #final line after fda
+
+#Alternative
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(tempo_year_ave_alt[4:34]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.9)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_tempo_alt <- smooth.basis(samples, as.vector(tempo_year_ave_alt[4:34]), myfdPar)
+fdafd_tempo_alt<-myfd1_tempo_alt$fd
+plot(fdafd_tempo_alt, main = "Smooth tempo_alt Sentiment") #final line after fda
+
+#Hip Hop/Rap
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(tempo_year_ave_hip_rap[6:36]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.9)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_tempo_hip_rap <- smooth.basis(samples, as.vector(tempo_year_ave_hip_rap[6:36]), myfdPar)
+fdafd_tempo_hip_rap<-myfd1_tempo_hip_rap$fd
+plot(fdafd_tempo_hip_rap, main = "Smooth tempo_hip_rap Sentiment") #final line after fda
+
+
+#Loudness
+#Dance
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(loudness_year_ave_dance[11:41]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.85)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_loudness_dance <- smooth.basis(samples, as.vector(loudness_year_ave_dance[11:41]), myfdPar)
+fdafd_loudness_dance<-myfd1_loudness_dance$fd
+plot(fdafd_loudness_dance, main = "Smooth loudness_dance Sentiment") #final line after fda
+
+#Sing/Songwriter
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(loudness_year_ave_sing[18:48]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.85)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_loudness_sing <- smooth.basis(samples, as.vector(loudness_year_ave_sing[18:48]), myfdPar)
+fdafd_loudness_sing<-myfd1_loudness_sing$fd
+plot(fdafd_loudness_sing, main = "Smooth loudness_sing Sentiment") #final line after fda
+
+#Alternative
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(loudness_year_ave_alt[4:34]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.8)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_loudness_alt <- smooth.basis(samples, as.vector(loudness_year_ave_alt[4:34]), myfdPar)
+fdafd_loudness_alt<-myfd1_loudness_alt$fd
+plot(fdafd_loudness_alt, main = "Smooth loudness_alt Sentiment") #final line after fda
+
+#Hip Hop/Rap
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(loudness_year_ave_hip_rap[6:36]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.9)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_loudness_hip_rap <- smooth.basis(samples, as.vector(loudness_year_ave_hip_rap[6:36]), myfdPar)
+fdafd_loudness_hip_rap<-myfd1_loudness_hip_rap$fd
+plot(fdafd_loudness_hip_rap, main = "Smooth loudness_hip_rap Sentiment") #final line after fda
+
+#Time Signature
+#Dance
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(timesig_year_ave_dance[11:41]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.85)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_timesig_dance <- smooth.basis(samples, as.vector(timesig_year_ave_dance[11:41]), myfdPar)
+fdafd_timesig_dance<-myfd1_timesig_dance$fd
+plot(fdafd_timesig_dance, main = "Smooth timesig_dance Sentiment") #final line after fda
+
+#Sing/Songwriter
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(timesig_year_ave_sing[18:48]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.5)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_timesig_sing <- smooth.basis(samples, as.vector(timesig_year_ave_sing[18:48]), myfdPar)
+fdafd_timesig_sing<-myfd1_timesig_sing$fd
+plot(fdafd_timesig_sing, main = "Smooth timesig_sing Sentiment") #final line after fda
+
+#Alternative
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(timesig_year_ave_alt[4:34]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.55)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_timesig_alt <- smooth.basis(samples, as.vector(timesig_year_ave_alt[4:34]), myfdPar)
+fdafd_timesig_alt<-myfd1_timesig_alt$fd
+plot(fdafd_timesig_alt, main = "Smooth timesig_alt Sentiment") #final line after fda
+
+#Hip Hop/Rap
+loglam = seq(-9.0,-8.5,0.05) #penalty term, choose range (-8 to -7) trial and error
+#may need to change interval
+nlam = length(loglam)
+gcvsave = rep(NA,nlam)
+for (ilam in 1:nlam) {
+  lambda = 10^loglam[ilam]
+  myfdPar <- fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+  myfd1 <- smooth.basis(samples, as.vector(timesig_year_ave_hip_rap[6:36]), myfdPar)
+  gcvsave[ilam] = sum(myfd1$gcv)
+}
+plot(loglam,gcvsave) #loglam is log of lambda
+# choose -9.25 here lamda=10^(-9.25) = x-axis
+#y-axis cross-validation error rate
+#run multiple times, find lowest error rate lamda
+
+#plot the original lines
+lambda<-10^(-8.55)
+myfdPar<-fdPar(fdamatri, 2, lambda) #norder - 2 (4 - 2) because -2 for some reason
+myfd1_timesig_hip_rap <- smooth.basis(samples, as.vector(timesig_year_ave_hip_rap[6:36]), myfdPar)
+fdafd_timesig_hip_rap<-myfd1_timesig_hip_rap$fd
+plot(fdafd_timesig_hip_rap, main = "Smooth timesig_hip_rap Sentiment") #final line after fda
+```
+
+Time Series (Hotness/Genre)
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+tsderiv_consent = ts(derivatives_consent, start = 1961, end = 2010, frequency = 1)
+tsderiv_unemploy = ts(derivatives_unemploy, start = 1961, end = 2010, frequency = 1)
+tsderiv_gdp = ts(derivatives_gdp, start = 1961, end = 2010, frequency = 1)
+tsderiv2_gdp = ts(derivatives2_gdp, start = 1961, end = 2010, frequency = 1)
+tsderiv_sp500close = ts(derivatives_sp500close, start = 1961, end = 2010, frequency = 1)
+tsderiv_sp500range = ts(derivatives_sp500range, start = 1961, end = 2010, frequency = 1)
+
+tsderiv_consentshort = ts(derivatives_consent[20:50], start = 1980, end = 2010, frequency = 1)
+tsderiv_unemployshort = ts(derivatives_unemploy[20:50], start = 1980, end = 2010, frequency = 1)
+tsderiv_gdpshort = ts(derivatives_gdp[20:50], start = 1980, end = 2010, frequency = 1)
+tsderiv2_gdpshort = ts(derivatives2_gdp[20:50], start = 1980, end = 2010, frequency = 1)
+tsderiv_sp500closeshort = ts(derivatives_sp500close[20:50], start = 1980, end = 2010, frequency = 1)
+tsderiv_sp500rangeshort = ts(derivatives_sp500range[20:50], start = 1980, end = 2010, frequency = 1)
+
+tshotness = ts(hotness_year_ave, start = 1961, end = 2010, frequency = 1)
+tsloudness = ts(loudness_year_ave, start = 1961, end = 2010, frequency = 1)
+tstempo = ts(tempo_year_ave, start = 1961, end = 2010, frequency = 1)
+tstimesig = ts(timesig_year_ave, start = 1961, end = 2010, frequency = 1)
+
+tshotness_rockc = ts(hotness_year_ave_rockc, start = 1961, end = 2010, frequency = 1)
+tshotness_jazzc = ts(hotness_year_ave_jazzc, start = 1961, end = 2010, frequency = 1)
+tshotness_popc = ts(hotness_year_ave_popc, start = 1961, end = 2010, frequency = 1)
+tshotness_singc = ts(hotness_year_ave_singc, start = 1961, end = 2010, frequency = 1)
+
+tshotness_dancec = ts(hotness_year_ave_dancec[18:48], start = 1980, end = 2010, frequency = 1)
+tshotness_altc = ts(hotness_year_ave_altc[7:37], start = 1980, end = 2010, frequency = 1)
+tshotness_hip_rapc = ts(hotness_year_ave_hip_rapc[8:38], start = 1980, end = 2010, frequency = 1)
+
+#HOTNESS
+ccf(tsderiv_consent, tshotness_rockc)
+ccf(tsderiv_unemploy, tshotness_rockc)
+ccf(tsderiv_gdp, tshotness_rockc)
+ccf(tsderiv2_gdp, tshotness_rockc)
+ccf(tsderiv_sp500close, tshotness_rockc)
+ccf(tsderiv_sp500range, tshotness_rockc)
+
+ccf(tsderiv_consent, tshotness_jazzc)
+ccf(tsderiv_unemploy, tshotness_jazzc)
+ccf(tsderiv_gdp, tshotness_jazzc)
+ccf(tsderiv2_gdp, tshotness_jazzc)
+ccf(tsderiv_sp500close, tshotness_jazzc)
+ccf(tsderiv_sp500range, tshotness_jazzc)
+
+ccf(tsderiv_consent, tshotness_popc)
+ccf(tsderiv_unemploy, tshotness_popc)
+ccf(tsderiv_gdp, tshotness_popc)
+ccf(tsderiv2_gdp, tshotness_popc)
+ccf(tsderiv_sp500close, tshotness_popc)
+ccf(tsderiv_sp500range, tshotness_popc)
+
+ccf(tsderiv_consent, tshotness_singc)
+ccf(tsderiv_unemploy, tshotness_singc)
+ccf(tsderiv_gdp, tshotness_singc)
+ccf(tsderiv2_gdp, tshotness_singc)
+ccf(tsderiv_sp500close, tshotness_singc)
+ccf(tsderiv_sp500range, tshotness_singc)
+
+ccf(tsderiv_consentshort, tshotness_dancec)
+ccf(tsderiv_unemployshort, tshotness_dancec)
+ccf(tsderiv_gdpshort, tshotness_dancec)
+ccf(tsderiv2_gdpshort, tshotness_dancec)
+ccf(tsderiv_sp500closeshort, tshotness_dancec)
+ccf(tsderiv_sp500rangeshort, tshotness_dancec)
+
+ccf(tsderiv_consentshort, tshotness_altc)
+ccf(tsderiv_unemployshort, tshotness_altc)
+ccf(tsderiv_gdpshort, tshotness_altc)
+ccf(tsderiv2_gdpshort, tshotness_altc)
+ccf(tsderiv_sp500closeshort, tshotness_altc)
+ccf(tsderiv_sp500rangeshort, tshotness_altc)
+
+ccf(tsderiv_consentshort, tshotness_hip_rapc)
+ccf(tsderiv_unemployshort, tshotness_hip_rapc)
+ccf(tsderiv_gdpshort, tshotness_hip_rapc)
+ccf(tsderiv2_gdpshort, tshotness_hip_rapc)
+ccf(tsderiv_sp500closeshort, tshotness_hip_rapc)
+ccf(tsderiv_sp500rangeshort, tshotness_hip_rapc)
+
+#LOUDNESS
+ccf(tsderiv_consent, tsloudness)
+ccf(tsderiv_unemploy, tsloudness) 
+ccf(tsderiv_gdp, tsloudness)
+ccf(tsderiv2_gdp, tsloudness)
+ccf(tsderiv_sp500close, tsloudness)
+ccf(tsderiv_sp500range, tsloudness)
+
+#TEMPO
+ccf(tsderiv_consent, tstempo)
+ccf(tsderiv_unemploy, tstempo)
+ccf(tsderiv_gdp, tstempo)
+ccf(tsderiv2_gdp, tstempo)
+ccf(tsderiv_sp500close, tstempo)
+ccf(tsderiv_sp500range, tstempo)
+
+#TIME SIGNATURE
+ccf(tsderiv_consent, tstimesig) 
+ccf(tsderiv_unemploy, tstimesig) 
+ccf(tsderiv_gdp, tstimesig)
+ccf(tsderiv2_gdp, tstimesig)
+ccf(tsderiv_sp500close, tstimesig)
+ccf(tsderiv_sp500range, tstimesig)
+```
+
+Time Series (By Genre attributes)
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+tstempo_rock = ts(tempo_year_ave_rock, start = 1961, end = 2010, frequency = 1)
+tstempo_jazz = ts(tempo_year_ave_jazz, start = 1961, end = 2010, frequency = 1)
+tstempo_pop = ts(tempo_year_ave_pop, start = 1961, end = 2010, frequency = 1)
+
+tstempo_dance = ts(tempo_year_ave_dance[11:41], start = 1980, end = 2010, frequency = 1)
+tstempo_alt = ts(tempo_year_ave_alt[4:34], start = 1980, end = 2010, frequency = 1)
+tstempo_hip_rap = ts(tempo_year_ave_hip_rap[6:36], start = 1980, end = 2010, frequency = 1)
+tstempo_sing = ts(tempo_year_ave_sing[18:48], start = 1980, end = 2010, frequency = 1)
+
+tsloudness_rock = ts(loudness_year_ave_rock, start = 1961, end = 2010, frequency = 1)
+tsloudness_jazz = ts(loudness_year_ave_jazz, start = 1961, end = 2010, frequency = 1)
+tsloudness_pop = ts(loudness_year_ave_pop, start = 1961, end = 2010, frequency = 1)
+
+tsloudness_dance = ts(loudness_year_ave_dance[11:41], start = 1980, end = 2010, frequency = 1)
+tsloudness_alt = ts(loudness_year_ave_alt[4:34], start = 1980, end = 2010, frequency = 1)
+tsloudness_hip_rap = ts(loudness_year_ave_hip_rap[6:36], start = 1980, end = 2010, frequency = 1)
+tsloudness_sing = ts(loudness_year_ave_sing[18:48], start = 1980, end = 2010, frequency = 1)
+
+tstimesig_rock = ts(timesig_year_ave_rock, start = 1961, end = 2010, frequency = 1)
+tstimesig_jazz = ts(timesig_year_ave_jazz, start = 1961, end = 2010, frequency = 1)
+tstimesig_pop = ts(timesig_year_ave_pop, start = 1961, end = 2010, frequency = 1)
+
+tstimesig_dance = ts(timesig_year_ave_dance[11:41], start = 1980, end = 2010, frequency = 1)
+tstimesig_alt = ts(timesig_year_ave_alt[4:34], start = 1980, end = 2010, frequency = 1)
+tstimesig_hip_rap = ts(timesig_year_ave_hip_rap[6:36], start = 1980, end = 2010, frequency = 1)
+tstimesig_sing = ts(timesig_year_ave_sing[18:48], start = 1980, end = 2010, frequency = 1)
+
+
+#_________________
+#LOUDNESS Rock
+ccf(tsderiv_consent, tsloudness_rock) 
+ccf(tsderiv_unemploy, tsloudness_rock) 
+ccf(tsderiv_gdp, tsloudness_rock)
+ccf(tsderiv2_gdp, tsloudness_rock)
+ccf(tsderiv_sp500close, tsloudness_rock) 
+ccf(tsderiv_sp500range, tsloudness_rock)
+
+#TEMPO Rock
+ccf(tsderiv_consent, tstempo_rock) 
+ccf(tsderiv_unemploy, tstempo_rock) 
+ccf(tsderiv_gdp, tstempo_rock) 
+ccf(tsderiv2_gdp, tstempo_rock)
+ccf(tsderiv_sp500close, tstempo_rock) 
+ccf(tsderiv_sp500range, tstempo_rock) 
+
+#TIME SIGNATURE Rock
+ccf(tsderiv_consent, tstimesig_rock)
+ccf(tsderiv_unemploy, tstimesig_rock)
+ccf(tsderiv_gdp, tstimesig_rock) 
+ccf(tsderiv2_gdp, tstimesig_rock)
+ccf(tsderiv_sp500close, tstimesig_rock) 
+ccf(tsderiv_sp500range, tstimesig_rock) 
+
+#_________________
+#LOUDNESS jazz
+ccf(tsderiv_consent, tsloudness_jazz) 
+ccf(tsderiv_unemploy, tsloudness_jazz) 
+ccf(tsderiv_gdp, tsloudness_jazz)
+ccf(tsderiv2_gdp, tsloudness_jazz)
+ccf(tsderiv_sp500close, tsloudness_jazz) 
+ccf(tsderiv_sp500range, tsloudness_jazz)
+
+#TEMPO jazz
+ccf(tsderiv_consent, tstempo_jazz) 
+ccf(tsderiv_unemploy, tstempo_jazz) 
+ccf(tsderiv_gdp, tstempo_jazz) 
+ccf(tsderiv2_gdp, tstempo_jazz)
+ccf(tsderiv_sp500close, tstempo_jazz) 
+ccf(tsderiv_sp500range, tstempo_jazz)
+
+#TIME SIGNATURE jazz
+ccf(tsderiv_consent, tstimesig_jazz)
+ccf(tsderiv_unemploy, tstimesig_jazz)
+ccf(tsderiv_gdp, tstimesig_jazz)
+ccf(tsderiv2_gdp, tstimesig_jazz)
+ccf(tsderiv_sp500close, tstimesig_jazz) 
+ccf(tsderiv_sp500range, tstimesig_jazz)
+
+#_____________________
+#LOUDNESS pop
+ccf(tsderiv_consent, tsloudness_pop) 
+ccf(tsderiv_unemploy, tsloudness_pop) 
+ccf(tsderiv_gdp, tsloudness_pop) 
+ccf(tsderiv2_gdp, tsloudness_pop)
+ccf(tsderiv_sp500close, tsloudness_pop) 
+ccf(tsderiv_sp500range, tsloudness_pop)
+
+#TEMPO pop
+ccf(tsderiv_consent, tstempo_pop) 
+ccf(tsderiv_unemploy, tstempo_pop) 
+ccf(tsderiv_gdp, tstempo_pop) 
+ccf(tsderiv2_gdp, tstempo_pop)
+ccf(tsderiv_sp500close, tstempo_pop) 
+ccf(tsderiv_sp500range, tstempo_pop)
+
+#TIME SIGNATURE pop
+ccf(tsderiv_consent, tstimesig_pop)
+ccf(tsderiv_unemploy, tstimesig_pop)
+ccf(tsderiv_gdp, tstimesig_pop)
+ccf(tsderiv2_gdp, tstimesig_pop)
+ccf(tsderiv_sp500close, tstimesig_pop) 
+ccf(tsderiv_sp500range, tstimesig_pop)
+
+#_____________
+#LOUDNESS Dance
+ccf(tsderiv_consentshort, tsloudness_dance)
+ccf(tsderiv_unemployshort, tsloudness_dance)
+ccf(tsderiv_gdpshort, tsloudness_dance)
+ccf(tsderiv2_gdpshort, tsloudness_dance)
+ccf(tsderiv_sp500closeshort, tsloudness_dance)
+ccf(tsderiv_sp500rangeshort, tsloudness_dance)
+
+#TEMPO Dance
+ccf(tsderiv_consentshort, tstempo_dance)
+ccf(tsderiv_unemployshort, tstempo_dance)
+ccf(tsderiv_gdpshort, tstempo_dance)
+ccf(tsderiv2_gdpshort, tstempo_dance)
+ccf(tsderiv_sp500closeshort, tstempo_dance)
+ccf(tsderiv_sp500rangeshort, tstempo_dance)
+
+#TIME SIGNATURE Dance
+ccf(tsderiv_consentshort, tstimesig_dance)
+ccf(tsderiv_unemployshort, tstimesig_dance)
+ccf(tsderiv_gdpshort, tstimesig_dance)
+ccf(tsderiv2_gdpshort, tstimesig_dance)
+ccf(tsderiv_sp500closeshort, tstimesig_dance)
+ccf(tsderiv_sp500rangeshort, tstimesig_dance)
+
+#________________
+#LOUDNESS alt
+ccf(tsderiv_consentshort, tsloudness_alt)
+ccf(tsderiv_unemployshort, tsloudness_alt)
+ccf(tsderiv_gdpshort, tsloudness_alt)
+ccf(tsderiv2_gdpshort, tsloudness_alt)
+ccf(tsderiv_sp500closeshort, tsloudness_alt)
+ccf(tsderiv_sp500rangeshort, tsloudness_alt)
+
+#TEMPO alt
+ccf(tsderiv_consentshort, tstempo_alt)
+ccf(tsderiv_unemployshort, tstempo_alt)
+ccf(tsderiv_gdpshort, tstempo_alt)
+ccf(tsderiv2_gdpshort, tstempo_alt)
+ccf(tsderiv_sp500closeshort, tstempo_alt)
+ccf(tsderiv_sp500rangeshort, tstempo_alt)
+
+#TIME SIGNATURE alt
+ccf(tsderiv_consentshort, tstimesig_alt)
+ccf(tsderiv_unemployshort, tstimesig_alt)
+ccf(tsderiv_gdpshort, tstimesig_alt)
+ccf(tsderiv2_gdpshort, tstimesig_alt)
+ccf(tsderiv_sp500closeshort, tstimesig_alt)
+ccf(tsderiv_sp500rangeshort, tstimesig_alt)
+
+#____________________
+#LOUDNESS hip_rap
+ccf(tsderiv_consentshort, tsloudness_hip_rap)
+ccf(tsderiv_unemployshort, tsloudness_hip_rap)
+ccf(tsderiv_gdpshort, tsloudness_hip_rap)
+ccf(tsderiv2_gdpshort, tsloudness_hip_rap)
+ccf(tsderiv_sp500closeshort, tsloudness_hip_rap)
+ccf(tsderiv_sp500rangeshort, tsloudness_hip_rap)
+
+#TEMPO hip_rap
+ccf(tsderiv_consentshort, tstempo_hip_rap)
+ccf(tsderiv_unemployshort, tstempo_hip_rap)
+ccf(tsderiv_gdpshort, tstempo_hip_rap)
+ccf(tsderiv2_gdpshort, tstempo_hip_rap)
+ccf(tsderiv_sp500closeshort, tstempo_hip_rap)
+ccf(tsderiv_sp500rangeshort, tstempo_hip_rap)
+
+#TIME SIGNATURE hip_rap
+ccf(tsderiv_consentshort, tstimesig_hip_rap)
+ccf(tsderiv_unemployshort, tstimesig_hip_rap)
+ccf(tsderiv_gdpshort, tstimesig_hip_rap)
+ccf(tsderiv2_gdpshort, tstimesig_hip_rap)
+ccf(tsderiv_sp500closeshort, tstimesig_hip_rap)
+ccf(tsderiv_sp500rangeshort, tstimesig_hip_rap)
+
+#____________
+#LOUDNESS sing
+ccf(tsderiv_consentshort, tsloudness_sing)
+ccf(tsderiv_unemployshort, tsloudness_sing)
+ccf(tsderiv_gdpshort, tsloudness_sing)
+ccf(tsderiv2_gdpshort, tsloudness_sing)
+ccf(tsderiv_sp500closeshort, tsloudness_sing)
+ccf(tsderiv_sp500rangeshort, tsloudness_sing)
+
+#TEMPO sing
+ccf(tsderiv_consentshort, tstempo_sing)
+ccf(tsderiv_unemployshort, tstempo_sing)
+ccf(tsderiv_gdpshort, tstempo_sing)
+ccf(tsderiv2_gdpshort, tstempo_sing)
+ccf(tsderiv_sp500closeshort, tstempo_sing)
+ccf(tsderiv_sp500rangeshort, tstempo_sing)
+
+#TIME SIGNATURE sing
+ccf(tsderiv_consentshort, tstimesig_sing)
+ccf(tsderiv_unemployshort, tstimesig_sing)
+ccf(tsderiv_gdpshort, tstimesig_sing)
+ccf(tsderiv2_gdpshort, tstimesig_sing)
+ccf(tsderiv_sp500closeshort, tstimesig_sing)
+ccf(tsderiv_sp500rangeshort, tstimesig_sing)
+
+```
+
+Plots time series lags
+```{r, fig.keep = 'none', error = FALSE, message = FALSE, warning = FALSE, results = 'hide'}
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_gdp, main = "Loudness vs. GDP with Lag", xlab = "Time, t = 0 (1961)", ylab = "First Derivative of GDP") #2 year lag
+par(new = T)
+plot(fdafd_loudness, col = "red", axes = F, xlim = c(2, 52), xlab = '', ylab = '')
+axis(side=4)
+mtext("Average Loudness of Popular Music", side = 4, line = 3)
+legend('topleft', col = c("red", "black"), lty = 1, legend = c("Average Loudness", "First Derivative of GDP"), cex = 0.5)
+lag2.plot(tsderiv_gdp, tsloudness, max.lag = 4, smooth = T)
+cor.test(tsderiv_gdp[1:49], tsloudness[2:50])
+grangertest(tsloudness[1:50]~tsderiv_gdp[1:50])
+grangertest(tsderiv_gdp[1:50]~tsloudness[1:50])
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_gdp, main = "Tempo vs. GDP with Lag", xlab = "Time, t = 0 (1961)", ylab = "First Derivative of GDP")
+par(new = T)
+plot(fdafd_tempo, col = "red", axes = F, xlim = c(1, 52), xlab = '', ylab = '', ylim = c(115, 140))
+axis(side = 4)
+mtext("Average Tempo of Popular Music", side = 4, line = 3)
+legend('topleft', col = c("red", "black"), lty = 1, legend = c("Average Tempo", "First Derivative of GDP"), cex = 0.5)
+lag2.plot(tsderiv_gdp, tstempo, max.lag = 10, smooth = T)
+cor.test(tsderiv_gdp[1:49], tstempo[2:50])
+#grangertest(tstempo[2:50]~tsderiv_gdp[1:49])
+#vardata = cbind(tstempo, tsderiv_gdp)
+#varset = VAR(vardata, p = 1, type = "const")
+#causality(varset, cause = "tsderiv_gdp")$Granger
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_gdp, main = "Time Signature vs. GDP with Lag", xlab = "Time, t = 0 (1961)", ylab = "First Derivative of GDP")
+par(new = T)
+plot(fdafd_timesig, col = "red", axes = F, xlim = c(4, 52), ylim = c(2.8, 3.9), xlab = '', ylab = '')
+axis(side=4)
+mtext("Average Time Signature of Popular Music", side = 4, line = 3)
+legend('topleft', col = c("red", "black"), lty = 1, legend = c("Average Time Signature", "First Derivative of GDP"), cex = 0.5)
+lag2.plot(tsderiv_gdp, tstimesig, max.lag = 4, smooth = T)
+cor.test(tsderiv_gdp[1:46], tstimesig[5:50])
+#grangertest(tstimesig[4:50]~tsderiv_gdp[1:47])
+#vardata = cbind(tstimesig, tsderiv_gdp)
+#varset = VAR(vardata, p = 1, type = "const", lag.max = 4)
+#causality(varset, cause = "tsderiv_gdp")$Granger
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_gdp, main = "Rock Hotness vs. GDP with Lag", xlab = "Time, t = 0 (1961)", ylab = "First Derivative of GDP")
+par(new = T)
+plot(fdafd_hotness_rockc, col = "red", axes = F, xlim = c(4, 52), ylim = c(0.46, 0.55), xlab = '', ylab = '')
+axis(side = 4)
+mtext("Average Hotness of Rock", side = 4, line = 3)
+legend('topleft',col=c("red","black"),lty=1,legend=c("Average Hotness of Rock","First Derivative of GDP"), cex = 0.5)
+lag2.plot(tsderiv_gdp, tshotness_rockc, max.lag = 5, smooth = T)
+cor.test(tsderiv_gdp[1:46], tshotness_rockc[5:50])
+grangertest(tshotness_rockc[4:50]~tsderiv_gdp[1:47])
+grangertest(tsderiv_gdp[1:47]~tshotness_rockc[4:50])
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_gdp, main = "Rock Loudness vs. GDP with Lag", xlab = "Time, t = 0 (1961)", ylab = "First Derivative of GDP")
+par(new = T)
+plot(fdafd_loudness_rock, col = "red", axes = F, xlim = c(2, 52), xlab = '', ylab = '')
+axis(side = 4)
+mtext("Average Loudness of Rock", side = 4, line = 3)
+legend('topleft', col = c("red", "black"), lty = 1, legend = c("Average Loudness of Rock", "First Derivative of GDP"), cex = 0.5)
+lag2.plot(tsderiv_gdp, tsloudness_rock, max.lag = 5, smooth = T)
+cor.test(tsderiv_gdp[1:49], tsloudness_rock[2:50])
+#grangertest(tsloudness_rock[1:50]~tsderiv_gdp[1:50])
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_gdp, main = "Rock Time Signature vs. GDP with Lag", xlab = "Time, t = 0 (1961)", ylab = "First Derivative of GDP")
+par(new = T)
+plot(fdafd_timesig_rock, col = "red", axes = F, xlim = c(2, 52), xlab = '', ylab = '')
+axis(side = 4)
+mtext("Average Time Signature of Rock", side = 4, line = 3)
+legend('topleft', col = c("red", "black"), lty = 1, legend = c("Average Time Signature of Rock", "First Derivative of GDP"), cex = 0.5)
+lag2.plot(tsderiv_gdp, tstimesig_rock, max.lag = 5, smooth = T)
+cor.test(tsderiv_gdp[1:49], tstimesig_rock[2:50])
+grangertest(tstimesig_rock[2:50]~tsderiv_gdp[1:49])
+grangertest(tsderiv_gdp[1:49]~tstimesig_rock[2:50])
+
+plot(FirstDeriv_unemploy, main = "Hotness Pop vs. Unemploy with Lag", xlim = c(14, 52)) #final line after fda
+par(new = T)
+plot(fdafd_hotness_popc, col = "red", axes = F, ylim = c(0.3, 0.65))
+axis(side=4)
+lag2.plot(tshotness_popc, tsderiv_unemploy, max.lag = 13, smooth = T)
+cor.test(tsderiv_unemploy[14:50], tshotness_popc[1:37])
+
+plot(FirstDeriv_gdp, main = "Pop Loudness vs. GDP with Lag")
+par(new = T)
+plot(fdafd_loudness_pop, col = "red", axes = F, xlim = c(2, 52))
+axis(side = 4)
+lag2.plot(tsderiv_gdp, tsloudness_pop, max.lag = 5, smooth = T)
+cor.test(tsderiv_gdp[1:48], tsloudness_pop[3:50])
+grangertest(tsloudness_pop[2:50]~tsderiv_gdp[1:49])
+grangertest(tsderiv_gdp[1:49]~tsloudness_pop[2:50])
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_gdp, main = "Jazz Time Signature vs. GDP with Lag", xlab = "Time, t = 0 (1961)", ylab = "First Derivative of GDP")
+par(new = T)
+plot(fdafd_timesig_jazz, col = "red", axes = F, xlim = c(1, 50), ylim = c(2.5, 4.5), xlab = '', ylab = '')
+axis(side = 4)
+mtext("Average Jazz Time Signature", side = 4, line = 3)
+legend('topleft', col = c("red", "black"), lty = 1, legend = c("Average Time Signature of Jazz", "First Derivative of GDP"), cex = 0.5)
+lag2.plot(tsderiv_gdp, tsloudness_jazz, max.lag = 5, smooth = T)
+cor.test(tsderiv_gdp[1:47], tstimesig_jazz[4:50])
+grangertest(tstimesig_jazz[3:50]~tsderiv_gdp[1:48])
+grangertest(tsderiv_gdp[1:48]~tstimesig_jazz[3:50])
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_gdp, main = "Singer/Songwriter Hotness vs. GDP with Lag", xlab = "Time, t = 0 (1961)", ylab = "First Derivative of GDP")
+par(new = T)
+plot(fdafd_hotness_singc, col = "red", axes = F, xlim = c(3, 52), ylim = c(0.3, 0.6), xlab = '', ylab = '')
+axis(side = 4)
+mtext("Average Singer/Songwriter Hotness", side = 4, line = 3)
+legend('topleft', col = c("red", "black"), lty = 1, legend = c("Average Hotness of Singer/Songwriter", "First Derivative of GDP"), cex = 0.5)
+lag2.plot(tsderiv_gdp, tshotness_singc, max.lag = 4, smooth = T)
+cor.test(tsderiv_gdp[1:47], tshotness_singc[4:50])
+grangertest(tshotness_singc[3:50]~tsderiv_gdp[1:48])
+grangertest(tsderiv_gdp[1:48]~tshotness_singc[3:50])
+
+plot(FirstDeriv_gdp, main = "Singer/Songwriter Loudness vs. GDP with Lag", xlim = c(22, 50))
+par(new = T)
+plot(fdafd_loudness_sing, col = "red", axes = F, ylim = c(-16, -8))
+axis(side = 4)
+lag2.plot(tsderiv_gdpshort,tsloudness_sing, max.lag = 7, smooth = T)
+cor.test(tsderiv_gdp[1:48], tsloudness_sing[3:50])
+grangertest(tsloudness_sing[2:50]~tsderiv_gdp[1:49])
+grangertest(tsderiv_gdp[1:49]~tsloudness_sing[2:50])
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_sp500close, main = "Alternative Tempo vs. S&P 500 Adj. Close with Lag", xlim = c(22, 50), xlab = "Time, t = 0 (1981)", ylab = "First Derivative of SP500 Adj. Close")
+par(new = T)
+plot(fdafd_tempo_alt, col = "red", axes = F, ylim = c(125, 165), xlab = '', ylab = '')
+axis(side = 4)
+mtext("Average Tempo of Alternative", side = 4, line = 3)
+legend('bottomleft', col = c("red", "black"), lty = 1, legend = c("Average Tempo of Alternative", "First Derivative of S&P 500 Adj. Close"), cex = 0.5)
+lag2.plot(tstempo_alt,tsderiv_sp500closeshort, max.lag = 7, smooth = T)
+cor.test(tsderiv_sp500close[22:50], tstempo_alt[1:29])
+#grangertest(tstempo_alt[1:28]~tsderiv_sp500close[23:50])
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_consent, main = "Alternative Time Signature vs. Consumer Sentiment with Lag", xlim = c(20, 50), xlab = "Time, t = 0 (1981)", ylab = "First Derivative of Consumer Sentiment")
+par(new = T)
+plot(fdafd_timesig_alt, col = "red", axes = F, xlim = c(1, 33), ylim = c(2.5, 4.0), xlab = '', ylab = '')
+axis(side = 4)
+mtext("Average Time Signature of Alternative", side = 4, line = 3)
+legend('topright', col = c("red", "black"), lty = 1, legend = c("Average Time Signature of Alternative", "First Derivative of Consumer Sentiment"), cex = 0.5)
+lag2.plot(tsderiv_consentshort, tstimesig_alt, max.lag = 7, smooth = T)
+cor.test(tsderiv_consent[20:49], tstimesig_alt[2:31])
+grangertest(tstimesig_alt[5:31]~tsderiv_consent[20:46])
+grangertest(tsderiv_consent[20:46]~tstimesig_alt[5:31])
+
+par(mar=c(5,4,4,5)+.1)
+plot(FirstDeriv_unemploy, main = "Hip Hop/Rap Tempo vs. Unemployment with Lag", xlim = c(21, 50), xlab = "Time, t = 0 (1981)", ylab = "First Derivative of Unemployment")
+par(new = T)
+plot(fdafd_tempo_hip_rap, col = "red", axes = F, xlab = '', ylab = '')
+axis(side = 4)
+mtext("Average Hip Hop/Rap Tempo", side = 4, line = 3)
+legend('bottomright', col = c("red", "black"), lty = 1, legend = c("Average Tempo of Hip Hop/Rap", "First Derivative of Unemployment"), cex = 0.5)
+lag2.plot(tstempo_hip_rap, tsderiv_unemployshort, max.lag = 7, smooth = T)
+cor.test(tsderiv_unemploy[21:50], tstempo_hip_rap[1:30])
+#grangertest(tstempo_hip_rap[1:29]~tsderiv_unemploy[22:50])
+```
+
+
+
+
+
