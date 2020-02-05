@@ -121,3 +121,7 @@ plot(m.3.1)
 # dev.off()
 plot(m.3.2)
 ```
+![Resulting Model 1 from Edwards and Havranek, 1985](Plot2.png)
+![Resulting Model 2 from Edwards and Havranek, 1985](Plot3.png)
+
+
