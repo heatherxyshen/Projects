@@ -1,0 +1,132 @@
+---
+title: "KDE and Kernel Regression"
+author: "Heather Shen"
+date: "2/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Part 1
+```{r , cache = TRUE}
+library(ggplot2)
+dat = faithful
+
+#Define kernel function
+kern = function(x){
+  return((1-abs(x))*(abs(x) <= 1))
+}
+
+#calculate Silverman's bandwidth
+sig = sd(dat$waiting)
+hrot = 0.9*min(sig, IQR(dat$waiting)/1.34)*nrow(dat)^(-1/5)
+
+#build scaled kernel function for each data point
+dens = function(x, dat, h){
+  n = length(dat)
+  y = numeric(length(x))
+  for(i in 1:length(x)){
+    y[i] = (1/(n*h))*sum(kern((x[i] - dat)/h))
+  }
+  return(y)
+}
+
+#simulate X from min(dat$waiting) - 5 to max(dat$waiting) + 5, taking 300 points of equal distance
+x = seq(from = min(dat$waiting) - 5, to = max(dat$waiting) + 5, length.out = 300)
+#calculated density function values
+densvals = dens(x, dat$waiting, hrot)
+df = data.frame(cbind(x, densvals))
+#plot of estimated density 
+ggplot(df, aes(x = x, y = densvals)) +
+  geom_line() +
+  labs(title = "Estimated Density Plot of Waiting", x = "Waiting", y = "Estimated Density")
+#plot of density for all "waiting" data
+plot(density(dat$waiting), main = "Density Plot of Waiting")
+```
+
+#### Part 2
+##### Part i
+```{r, message=FALSE, cache = TRUE}
+library(ggplot2)
+#kernel regression implementation - same output as ksmooth, with our triangle kernel
+kernreg = function(x, y, FUN = kern, bw, x.points) {
+  n = length(x.points)
+  # y.points = numeric(n)
+  y.points = sapply(x.points, function(s){sum(y*FUN((s - x)/bw))/sum(FUN((s - x)/bw))})
+  df = data.frame(x.points, y.points)
+  return(df)
+}
+
+#k-fold cross validation
+cv = function(k, x, y, bw){
+  n = length(x)
+  folds = (sample(n, n, replace = F) %% k) + 1
+  err = numeric(length(bw))
+  for(i in 1:length(bw)){
+    h0 = bw[i]
+    cv.err = 0
+    # print(h0)
+    for(j in 1:k) {
+      x.train = x[folds != j]
+      y.train = y[folds != j]
+      x.test = x[folds == j]
+      y.test = y[folds == j]
+      kreg = kernreg(x.train, y.train, FUN = kern, h0, x.test)
+      cv.err = cv.err + mean((y.test-kreg$y.points)^2,na.rm=T)
+    }
+    err[i] = cv.err/k
+  }
+  return(err)
+}
+
+#defining X and Y
+X = dat$eruptions
+Y = dat$waiting
+
+k = 5
+h_seq = seq(0.01, 3, length.out = 100)
+N = 100
+
+err.h = numeric(N)
+
+for(i in 1:N){
+  cv.h = cv(k, X, Y, h_seq)
+  err.h = err.h + cv.h
+}
+err.Nh = err.h/N
+
+dat.f = data.frame(cbind(h_seq, err.Nh))
+
+ggplot(dat.f, aes(x = h_seq, y = err.Nh)) +
+  geom_line() +
+  labs(title = "5-fold CV Error Rates (100 reps)", x = "Bandwidth", y = "Average Error Rate (under squared distance)")
+
+```
+
+##### Part ii
+The optimal bandwidth that we choose is 
+```{r, echo = FALSE}
+h_opt = h_seq[which(err.Nh==min(err.Nh))]
+h_opt
+```
+, where the average error (under squared distance) is 
+```{r, echo = FALSE}
+min(err.Nh)
+```
+over 100 repetitions.
+
+##### Part iii
+```{r}
+library(ggplot2)
+
+plot.kreg = function(x){
+  sapply(x, function(s){sum(dat$waiting*kern((s - dat$eruptions)/h_opt))/sum(kern((s - dat$eruptions)/h_opt))})
+}
+
+ggplot(dat, aes(x = eruptions, y = waiting)) +
+  geom_point() +
+  stat_function(fun = plot.kreg, colour = "red") +
+  labs(title = "Eruptions vs. Waiting with Kernel Regression Line", x = "Eruptions", y = "Waiting")
+```
