@@ -1,0 +1,155 @@
+---
+title: "Clustering"
+author: "Heather Shen"
+date: "2/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, eval = TRUE, echo = FALSE, cache = TRUE, message = FALSE}
+library(ggplot2)
+library(foreach)
+library(dplyr)
+library(pracma)
+
+dat = faithful
+newdat = data.frame(cbind(dat$eruptions[1:271], dat$eruptions[2:272]))
+colnames(newdat) = c("x", "y")
+ggplot(newdat, aes(x = x, y = y)) +
+  geom_point(size=2) +
+  labs(title = "Diagnostic Plot", x = "Current Eruptions", y = "Next Eruptions")
+
+gauss.kern = function(x, bw = 0.2){
+  (1/sqrt(2*pi))*exp(-0.5*(x/bw)^2)
+}
+
+euc.dist <- function(x1, x2) {
+  sqrt(sum((as.numeric(x1) - as.numeric(x2)) ^ 2))
+}
+```
+
+##### Part 1
+
+```{r, echo = FALSE, cache = TRUE, message = FALSE, warning = FALSE}
+shift = function(point, data, tol = 1e-3){
+  diff = 2*tol
+  while(diff > tol){
+    dist.mat = apply(data, 1, FUN = function(x){euc.dist(x, point)})
+    kern = gauss.kern(dist.mat)
+    
+    den = sum(kern)
+    x = sum(data$x*kern)/den
+    y = sum(data$y*kern)/den
+    
+    diff = euc.dist(c(x, y), point)
+    point = c(x,y)
+  }
+  return(point)
+}
+
+assign.cluster = function(data, distance = "euclidean", tol = 2e-1){
+  data$label = NA
+  labels = data.frame(x = 0, y = 0, label = 0)
+  colnames(labels) = colnames(data)
+  for(i in 1:nrow(data)){
+    labels.points = subset(labels, select = -c(label))
+    point = subset(data[i,], select = -c(label))
+    dist.label = apply(labels.points, 1, function(x){euc.dist(point, x)})
+    if(min(dist.label) <= tol){
+      data$label[i] = labels$label[which.min(dist.label)]
+    }
+    else{
+      data$label[i] = max(labels$label)+1
+      labels = rbind(labels, data[i,])
+    }
+  }
+  return(data)
+}
+
+means = data.frame(t(apply(newdat, 1, FUN = function(x){shift(x, newdat)})))
+ms.cluster = assign.cluster(means)
+
+ms.plot = cbind(newdat, label = as.factor(ms.cluster$label))
+
+ggplot(ms.plot, aes(x = x, y = y, color = label)) +
+  geom_point() +
+  scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#D55E00")) +
+  labs(title = "Mean-Shift Clusters", x = "Current Eruptions", y = "Next Eruptions")
+```
+
+
+##### Part 2
+```{r, warning = FALSE, echo = FALSE, cache = TRUE, message = FALSE}
+k.means = function(data, n.cluster = 4, tol = 1e-3, n.iter = 1000){
+  min.obj = Inf
+  points = data
+  data$label = NA
+  for(i in 1:n.iter){
+    ind = sample(1:nrow(data), size = n.cluster)
+    center = data %>% dplyr::select(-label) %>% slice(ind)
+    diff = 2*tol
+    while(diff > tol){
+      dist.mat = distmat(as.matrix(points), as.matrix(center))
+      data$label = as.factor(apply(dist.mat, 1, FUN = function(x){which.min(x)}))
+      
+      new.center = data %>%
+        group_by(label) %>%
+        summarise_all(list(mean)) %>%
+        dplyr::select(-label)
+      
+      diff = max(diag(distmat(as.matrix(new.center), as.matrix(center))))
+      
+      center = new.center
+    }
+    dist.cl = distmat(as.matrix(points), as.matrix(center))
+    obj = mean((apply(dist.cl, 1, min)^2))
+    if(min.obj > obj) {
+      min.obj = obj
+      f.center = center
+    }
+  }
+  dist.mat = t(distmat(as.matrix(f.center), as.matrix(points)))
+  data$label = as.factor(apply(dist.mat, 1, FUN = function(x){which.min(x)}))
+  return(data)
+}
+
+km.plot = k.means(newdat)
+
+ggplot(km.plot, aes(x = x, y = y, color = label)) +
+  geom_point() +
+  scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#D55E00")) +
+  labs(title = "K-Means Clusters", x = "Current Eruptions", y = "Next Eruptions")
+```
+
+##### Part 3
+```{r, warning = FALSE, echo = FALSE, cache = TRUE, message = FALSE}
+## We see that the similarity entry is the gaussian kernel without the constant 1/sqrt(2*p) in front, where the bandwidth is sigma, and l-2 norm from 
+
+spec.cluster = function(data, k = 4){
+  n = nrow(data)
+  dist.mat = as.matrix(dist(data, method = "euclidean", diag = TRUE, upper = TRUE))
+  sim = gauss.kern(dist.mat, bw = 0.2)*sqrt(2*pi)
+  D = diag(rowSums(sim))
+  
+  Lap.rw = diag(n) - solve(D) %*% sim
+  
+  eigen.lap = eigen(Lap.rw)
+  new.y = data.frame(eigen.lap$vectors[, n:(n-k+1)])
+  
+  km = k.means(new.y)
+  data$label = km$label
+  return(data)
+}
+
+spec.cl = spec.cluster(newdat)
+
+ggplot(spec.cl, aes(x = x, y = y, color = label)) +
+  geom_point() +
+  scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#D55E00")) +
+  labs(title = "Spectral Clusters", x = "Current Eruptions", y = "Next Eruptions")
+```
+
+
